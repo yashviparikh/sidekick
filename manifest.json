@@ -1,0 +1,20 @@
+{
+    "manifest_version":3,
+    "version":"1.0",
+    "name":"Sidekick",
+    "description":"Your browser's personal shortcut diary",
+    "background": {
+     "service_worker": "service-worker.js"
+ },
+    "content_scripts": [
+        {
+            "matches": ["https://chatgpt.com/"],
+            "js": ["content-worker.js"]
+        }
+    ],
+    "permissions": [
+        "storage",
+        "activeTab",
+        "scripting"
+    ]
+}   
