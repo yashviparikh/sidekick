@@ -23,7 +23,6 @@ if (!document.getElementById("sidekick-panel")) {
     panel.style.height = "100vh";
     panel.style.width = "500px";
     panel.style.background = "white";
-    panel.style.color = "#111";
     panel.style.boxShadow = "-4px 0 10px rgba(0,0,0,0.2)";
     panel.style.transform = "translateX(500px)"; // fully hidden
     panel.style.transition = "transform 0.3s ease";
@@ -95,7 +94,6 @@ captureBtn.addEventListener("click", () => {
   capturedList.style.padding = "0 20px 20px";
   capturedList.style.overflowY = "auto";
   capturedList.style.maxHeight = "calc(100vh - 80px)";
-  capturedList.style.color = "#111";
   panel.appendChild(capturedList);
 
     document.body.appendChild(panel);
@@ -291,7 +289,6 @@ function onCaptureHover(e) {
 
       const content = document.createElement("div");
       content.style.marginBottom = "6px";
-      content.style.color = "#111";
       if (item.type === "image") {
         const img = document.createElement("img");
         img.src = item.content;
@@ -304,28 +301,14 @@ function onCaptureHover(e) {
         text.innerText = item.content || "";
         text.style.wordBreak = "break-word";
         text.style.fontSize = "12px";
-        text.style.color = "#111";
         content.appendChild(text);
       }
 
       const source = document.createElement("div");
+      source.innerText = `Source: ${item.sourceUrl}`;
       source.style.fontSize = "11px";
-      source.style.color = "#555";
+      source.style.color = "#ff7c7c";
       source.style.wordBreak = "break-word";
-
-      const sourceLabel = document.createElement("span");
-      sourceLabel.innerText = "Source: ";
-
-      const sourceLink = document.createElement("a");
-      sourceLink.href = item.sourceUrl;
-      sourceLink.innerText = item.sourceUrl;
-      sourceLink.target = "_blank";
-      sourceLink.rel = "noopener noreferrer";
-      sourceLink.style.color = "#1a0dab";
-      sourceLink.style.textDecoration = "underline";
-
-      source.appendChild(sourceLabel);
-      source.appendChild(sourceLink);
 
       row.appendChild(title);
       row.appendChild(content);

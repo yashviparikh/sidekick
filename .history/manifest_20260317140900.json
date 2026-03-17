@@ -12,8 +12,8 @@
   "https://chatgpt.com/*",
   "https://www.google.com/*",
   "https://web.whatsapp.com/*",
-  "https://www.youtube.com/*",
-  "https://mail.google.com/*"
+  "https://www.youtube.com//*",
+  "https://mail.google.com/"
 ]
 ,
             "js": ["content-worker.js"]
