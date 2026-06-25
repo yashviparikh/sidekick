@@ -2,29 +2,13 @@ console.log("Sidekick content script loaded");
 
 if (!document.getElementById("sidekick-panel")) {
 
-  // ═══════════════════════════════════════════════════════════════
-  // STORAGE — chrome.storage.local for cross-tab, cross-window
-  // persistence within the same browser profile.
-  //
-  // Strategy: keep an in-memory _cache so all render code stays
-  // synchronous. On boot we pull from storage once; every write
-  // updates the cache AND fires an async push to storage.
-  // A storage listener keeps every other tab's cache in sync.
-  // ═══════════════════════════════════════════════════════════════
   const STORAGE_KEY = "sidekick_data";
-  let _cache = null; // populated during boot, never null afterwards
-  let _contextAlive = true; // set to false when extension is reloaded/updated
+  let _cache = null;
+  let _contextAlive = true;
 
-  // Guard: returns true if the extension context is still valid.
-  // When an extension is reloaded/updated while a tab is open, all
-  // chrome.* APIs throw "Extension context invalidated". We detect this
-  // once and then stop calling chrome.* entirely for this page session.
-  // The in-memory _cache continues to work for the rest of the session.
   function contextOk() {
     if (!_contextAlive) return false;
     try {
-      // Cheapest possible API call — just reads a string, never throws
-      // under normal circumstances.
       void chrome.runtime.id;
       return true;
     } catch (_) {
@@ -40,7 +24,7 @@ if (!document.getElementById("sidekick-panel")) {
 
   function setData(d) {
     _cache = d;
-    if (!contextOk()) return; // cache updated above; just skip the disk write
+    if (!contextOk()) return;
     chrome.storage.local.set({ [STORAGE_KEY]: d }, () => {
       if (chrome.runtime.lastError) {
         console.warn("[Sidekick] storage write failed:", chrome.runtime.lastError);
@@ -53,8 +37,6 @@ if (!document.getElementById("sidekick-panel")) {
     return { notebooks: [nb], capturedItems: [], activeNotebookId: nb.id, recycleBin: [] };
   }
 
-  // Keep other tabs in sync: when storage changes externally, pull
-  // the new value into our cache and re-render the current view.
   if (contextOk()) {
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== "local" || !changes[STORAGE_KEY]) return;
@@ -67,9 +49,6 @@ if (!document.getElementById("sidekick-panel")) {
     });
   }
 
-  // ── Boot sequence ─────────────────────────────────────────────
-  // Everything is deferred until storage resolves. We mount a
-  // temporary loading indicator while we wait.
   function boot(storedData) {
     if (storedData) {
       _cache = storedData;
@@ -90,17 +69,8 @@ if (!document.getElementById("sidekick-panel")) {
       boot(result[STORAGE_KEY] || null);
     });
   } else {
-    // Context already dead on load (extension reloaded before this ran) —
-    // start fresh from an empty in-memory state so the UI still works.
     boot(null);
   }
-
-  // ─────────────────────────────────────────────────────────────
-  // Everything below is identical to the original except:
-  //   • getData() / setData() now hit the cache above
-  //   • purgeBin() / finishBoot() called from boot()
-  //   • No sessionStorage references remain
-  // ─────────────────────────────────────────────────────────────
 
   function uid() { return "id_" + Math.random().toString(36).slice(2) + Date.now().toString(36); }
   function now() { return new Date().toISOString(); }
@@ -125,9 +95,6 @@ if (!document.getElementById("sidekick-panel")) {
     if (t) lastSelectedText = t;
   });
 
-  // ═══════════════════════════════════════════════════════════════
-  // STYLES
-  // ═══════════════════════════════════════════════════════════════
   const styleEl = document.createElement("style");
   styleEl.id = "sidekick-styles";
   styleEl.textContent = `
@@ -181,9 +148,6 @@ if (!document.getElementById("sidekick-panel")) {
   `;
   document.head.appendChild(styleEl);
 
-  // ═══════════════════════════════════════════════════════════════
-  // PANEL SHELL
-  // ═══════════════════════════════════════════════════════════════
   const panel = document.createElement("div");
   panel.id = "sidekick-panel";
   Object.assign(panel.style, {
@@ -237,15 +201,11 @@ if (!document.getElementById("sidekick-panel")) {
   document.body.appendChild(panel);
   document.body.appendChild(arrow);
 
-  // ── Loading placeholder (shown while storage.get() resolves) ──
   const loadingMsg = document.createElement("div");
   loadingMsg.className = "sk-empty";
   loadingMsg.textContent = "Loading…";
   bodySlot.appendChild(loadingMsg);
 
-  // ═══════════════════════════════════════════════════════════════
-  // PANEL OPEN / CLOSE
-  // ═══════════════════════════════════════════════════════════════
   let isOpen = false;
   function openPanel() {
     isOpen = true;
@@ -261,9 +221,6 @@ if (!document.getElementById("sidekick-panel")) {
   }
   arrow.addEventListener("click", () => isOpen ? closePanel() : openPanel());
 
-  // ═══════════════════════════════════════════════════════════════
-  // RESIZE LOGIC
-  // ═══════════════════════════════════════════════════════════════
   let panelH = null;
 
   resizeH.addEventListener("mousedown", e => {
@@ -297,9 +254,6 @@ if (!document.getElementById("sidekick-panel")) {
     document.addEventListener("mouseup", onUp);
   });
 
-  // ═══════════════════════════════════════════════════════════════
-  // VIEW RENDERER
-  // ═══════════════════════════════════════════════════════════════
   function renderView(view) {
     currentView = view;
     headerSlot.innerHTML = "";
@@ -310,9 +264,6 @@ if (!document.getElementById("sidekick-panel")) {
     else if (view === "bin") renderBin();
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // MAIN VIEW
-  // ═══════════════════════════════════════════════════════════════
   function renderMain() {
     const d = getData();
     if (!d.notebooks.length) { renderExplore(); return; }
@@ -330,7 +281,6 @@ if (!document.getElementById("sidekick-panel")) {
     nbName.textContent = nb.name;
     nbName.addEventListener("click", () => inlineRename(nb, nbName));
 
-    // Sync indicator dot — flashes green when another tab writes
     const syncDot = document.createElement("span");
     syncDot.className = "sk-sync-dot";
     syncDot.title = "Synced across tabs";
@@ -417,29 +367,38 @@ if (!document.getElementById("sidekick-panel")) {
     card.appendChild(delBtn);
 
     const body = mk("div"); Object.assign(body.style, { fontSize: "13px", color: "#374151", marginBottom: "6px", lineHeight: "1.5" });
+
     if (note.type === "image") {
       const img = mk("img"); img.src = note.content;
       Object.assign(img.style, { maxWidth: "100%", maxHeight: "130px", borderRadius: "4px", display: "block" });
       body.appendChild(img);
     } else if (note.type === "video") {
-      // Thumbnail wrapper links to the clean watch URL
+      console.log("[Sidekick] Rendering video note card:", { id: note.id, content: note.content, thumb: note.thumb, platform: note.platform });
+
       const watchUrl = note.content || note.pageUrl || "";
       const wrap = mk("a"); wrap.href = watchUrl; wrap.target = "_blank"; wrap.rel = "noopener noreferrer";
       wrap.style.cssText = "display:block;position:relative;text-decoration:none;";
+
       if (note.thumb) {
+        console.log("[Sidekick] Rendering video thumbnail:", note.thumb);
         const thumb = mk("img"); thumb.src = note.thumb;
         Object.assign(thumb.style, { maxWidth: "100%", maxHeight: "130px", borderRadius: "6px", display: "block", objectFit: "cover" });
+        thumb.addEventListener("error", () => {
+          console.warn("[Sidekick] Video thumbnail failed to load:", note.thumb);
+        });
         const play = mk("div");
         play.style.cssText = "position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:40px;height:40px;background:rgba(0,0,0,0.65);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;color:#fff;pointer-events:none;";
         play.textContent = "\u25b6";
         wrap.append(thumb, play);
       } else {
+        console.log("[Sidekick] No thumbnail available, rendering fallback pill for:", watchUrl);
         const pill = mk("div");
         pill.style.cssText = "background:#fce7f3;color:#9d174d;border-radius:6px;padding:10px 12px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:8px;";
         const short = watchUrl.slice(0, 60) + (watchUrl.length > 60 ? "\u2026" : "");
         pill.innerHTML = `<span style="font-size:20px">\ud83c\udfa6</span><span>${esc(short)}</span>`;
         wrap.appendChild(pill);
       }
+
       body.appendChild(wrap);
     } else {
       body.textContent = note.content.slice(0, 180) + (note.content.length > 180 ? "…" : "");
@@ -472,9 +431,6 @@ if (!document.getElementById("sidekick-panel")) {
     input.addEventListener("keydown", e => { if (e.key === "Enter") input.blur(); if (e.key === "Escape") renderView("main"); });
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // EXPLORE VIEW
-  // ═══════════════════════════════════════════════════════════════
   function renderExplore() {
     const d = getData();
 
@@ -536,9 +492,6 @@ if (!document.getElementById("sidekick-panel")) {
     }, 30);
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // BIN VIEW
-  // ═══════════════════════════════════════════════════════════════
   function renderBin() {
     const d = getData();
 
@@ -620,12 +573,10 @@ if (!document.getElementById("sidekick-panel")) {
     return span;
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // DATA MUTATIONS
-  // ═══════════════════════════════════════════════════════════════
   function saveCapturedData(payload) {
     const d = getData();
     const item = { ...payload, id: uid(), notebookId: d.activeNotebookId, sourceUrl: location.href, capturedAt: now() };
+    console.log("[Sidekick] Saving captured item:", item);
     d.capturedItems.push(item);
     setData(d);
     undoStack = [];
@@ -705,9 +656,6 @@ if (!document.getElementById("sidekick-panel")) {
     return item;
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // DOWNLOAD
-  // ═══════════════════════════════════════════════════════════════
   function downloadNotebook(nb, fmt) {
     const d = getData();
     const notes = d.capturedItems.filter(n => n.notebookId === nb.id);
@@ -740,16 +688,15 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
       triggerDL(new Blob([html], { type: "application/vnd.ms-word" }), nb.name + ".doc");
     }
   }
+
   function triggerDL(blob, name) {
     const a = mk("a"); a.href = URL.createObjectURL(blob); a.download = name;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
+
   function esc(s) { return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 
-  // ═══════════════════════════════════════════════════════════════
-  // CAPTURE BAR
-  // ═══════════════════════════════════════════════════════════════
   const captureBar = document.createElement("div");
   captureBar.id = "sidekick-capture-bar";
   Object.assign(captureBar.style, {
@@ -790,9 +737,13 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
     if (item.type==="image") {
       const th = mk("img"); Object.assign(th.style, { height:"26px", width:"26px", objectFit:"cover", borderRadius:"3px", verticalAlign:"middle", marginRight:"5px" }); th.src = item.content;
       prev.appendChild(th); prev.append(item.content.split("/").pop().slice(0,40));
-    } else if (item.type==="video") { prev.textContent = "🎬 " + (item.content.split("/").pop().slice(0,55)||item.content.slice(0,55));
-    } else if (item.type==="iframe") { prev.textContent = "🖼 " + item.content.slice(0,55);
-    } else { prev.textContent = item.content.slice(0,80)+(item.content.length>80?"…":""); }
+    } else if (item.type==="video") {
+      prev.textContent = "🎬 " + (item.content.split("/").pop().slice(0,55)||item.content.slice(0,55));
+    } else if (item.type==="iframe") {
+      prev.textContent = "🖼 " + item.content.slice(0,55);
+    } else {
+      prev.textContent = item.content.slice(0,80)+(item.content.length>80?"…":"");
+    }
     L.append(tag, prev);
     const R = row();
     const u = cbBtn("↩ Undo"); u.addEventListener("click", () => { undoLastCapture(); showBarUndone(); }); R.appendChild(u);
@@ -807,7 +758,7 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
     const R = row();
     const re = cbBtn("⟳ Redo","#6d28d9"); re.addEventListener("click", () => { const it = redoLastCapture(); if(it) showBarCaptured(it); }); R.appendChild(re);
     const m = cbBtn("＋ More","#1d4ed8"); m.addEventListener("click", () => { showBarArmed(); enableCaptureMode(); }); R.appendChild(m);
-    const c = cbBtn("✕ Done"); c.addEventListener("click", () => hideBar()); R.appendChild(c);
+    const c = cbBtn("✕ Done"); c.addEventListener("click", () => hideBar()) ; R.appendChild(c);
     captureBar.append(L, R);
   }
 
@@ -819,26 +770,27 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
   function startCapture() {
     const sel = window.getSelection().toString().trim() || lastSelectedText;
     if (sel) {
+      console.log("[Sidekick] startCapture: capturing selected text, length:", sel.length);
       const item = saveCapturedData({ type:"text", content:sel }); lastSelectedText = "";
       showBarCaptured(item); closePanel(); return;
     }
+    console.log("[Sidekick] startCapture: no selection, entering capture mode");
     closePanel(); showBarArmed(); enableCaptureMode();
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // CAPTURE MODE
-  // ═══════════════════════════════════════════════════════════════
-  // Track last mousedown position so iframe hit-test works even when
-  // the click event is swallowed by the iframe's document.
   let _lastDownX = 0, _lastDownY = 0;
+
   function onCaptureMouseDown(e) {
     if (!captureArmed) return;
     _lastDownX = e.clientX;
     _lastDownY = e.clientY;
+    const link = e.target.closest && e.target.closest("a[href]");
+    if (link) e.preventDefault();
   }
 
   function enableCaptureMode() {
     if (captureArmed) return; captureArmed = true;
+    console.log("[Sidekick] Capture mode enabled");
     captureStyleEl = mk("style");
     captureStyleEl.textContent = "#sidekick-capture-bar,#sidekick-capture-bar *{cursor:default!important}*{cursor:crosshair!important}";
     document.head.appendChild(captureStyleEl);
@@ -854,6 +806,7 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
 
   function disableCaptureMode() {
     if (!captureArmed) return; captureArmed = false;
+    console.log("[Sidekick] Capture mode disabled");
     if (captureStyleEl) { captureStyleEl.remove(); captureStyleEl = null; }
     if (captureOverlay) { captureOverlay.remove(); captureOverlay = null; }
     document.removeEventListener("mousedown", onCaptureMouseDown, true);
@@ -874,26 +827,31 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
 
   function onCaptureMouseUp(e) {
     if (!captureArmed) return;
+
     const txt = window.getSelection().toString().trim() || lastSelectedText;
     if (txt && !isInsidePanel()) {
+      console.log("[Sidekick] mouseup: captured text selection, length:", txt.length);
       const item = saveCapturedData({ type:"text", content:txt }); lastSelectedText = "";
       disableCaptureMode(); showBarCaptured(item);
       return;
     }
-    // mouseup fires even when the iframe eats the click — use saved coords
-    // as fallback so iframeAtPoint always has a position to work with.
+
     const x = (e && e.clientX) || _lastDownX;
     const y = (e && e.clientY) || _lastDownY;
-    // Check for a video-link under the pointer (e.g. Google Search thumbnails)
+    console.log("[Sidekick] mouseup: no text selection, checking elements at (%d, %d)", x, y);
+
     const elAtPoint = document.elementFromPoint(x, y);
     if (elAtPoint) {
       const nearestLink = elAtPoint.closest && elAtPoint.closest("a[href]");
       if (nearestLink && !panel.contains(nearestLink) && !captureBar.contains(nearestLink)) {
+        console.log("[Sidekick] mouseup: found link under pointer:", nearestLink.href);
         const info = parseVideoUrl(nearestLink.href);
         if (info) {
+          console.log("[Sidekick] mouseup: link is a video URL, parsed info:", info);
           const imgEl = nearestLink.querySelector("img") ||
                         (elAtPoint.tagName === "IMG" ? elAtPoint : null);
           const thumb = info.thumb || (imgEl ? imgEl.src : null);
+          console.log("[Sidekick] mouseup: thumbnail source:", thumb ? (imgEl && !info.thumb ? "link img element" : "parsed from URL") : "none");
           const item = saveCapturedData({
             type: "video", content: info.pageUrl, thumb,
             platform: info.platform, pageUrl: location.href
@@ -901,12 +859,15 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
           disableCaptureMode();
           if (item) showBarCaptured(item);
           return;
+        } else {
+          console.log("[Sidekick] mouseup: link is not a recognised video URL");
         }
       }
     }
-    // Fallback: iframe positional hit-test (embedded players)
+
     const hit = iframeAtPoint(x, y);
     if (hit && !panel.contains(hit) && !captureBar.contains(hit)) {
+      console.log("[Sidekick] mouseup: iframe hit at (%d, %d), src:", x, y, hit.src);
       const item = handleEl(hit, x, y);
       disableCaptureMode();
       if (item) showBarCaptured(item);
@@ -919,18 +880,28 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
     e.preventDefault(); e.stopPropagation();
     if (panel.contains(e.target) || arrow.contains(e.target)) return;
 
-    // ── Priority 1: video link thumbnail (e.g. Google Search results,
-    //   Twitter cards, Reddit previews). These are plain <a><img> combos
-    //   with no iframe or <video> tag — detect by walking up to the nearest
-    //   <a> and checking if its href is a known video URL.
+    console.log("[Sidekick] click: target tag=%s, id=%s, classes=%s", e.target.tagName, e.target.id, e.target.className);
+
+    const videoCard = e.target.closest("[data-ved][class*='kSFuOd'], [data-ved] a[href*='youtube'], .mnr-c.yl2NZc, [jsname]");
+    // Broader: walk up to find an ancestor with a real URL
+    const cardWithUrl = findGoogleVideoCard(e.target);
+    if (cardWithUrl) {
+      const item = saveCapturedData(cardWithUrl);
+      disableCaptureMode();
+      if (item) showBarCaptured(item);
+      return;
+    }
+
     const nearestLink = e.target.closest && e.target.closest("a[href]");
     if (nearestLink) {
+      console.log("[Sidekick] click: nearest link href:", nearestLink.href);
       const info = parseVideoUrl(nearestLink.href);
       if (info) {
-        // Also grab the thumbnail image from inside the link if present
+        console.log("[Sidekick] click: recognised video link, platform=%s videoId=%s", info.platform, info.videoId);
         const imgEl = nearestLink.querySelector("img") ||
                       (e.target.tagName === "IMG" ? e.target : null);
         const thumb = info.thumb || (imgEl ? imgEl.src : null);
+        console.log("[Sidekick] click: thumbnail:", thumb || "none");
         const item = saveCapturedData({
           type: "video",
           content: info.pageUrl,
@@ -941,109 +912,209 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
         disableCaptureMode();
         if (item) showBarCaptured(item);
         return;
+      } else {
+        console.log("[Sidekick] click: link is not a recognised video URL, falling through");
       }
     }
 
-    // ── Priority 2: actual <video>, <img>, <iframe> elements
     const composedPath = typeof e.composedPath === "function" ? e.composedPath() : [];
     let el = e.target;
     for (const n of composedPath) {
       if (n.tagName === "VIDEO" || n.tagName === "IMG" || n.tagName === "IFRAME") { el = n; break; }
     }
     if (el?.closest) { const v = el.closest("video"), i = el.closest("img"); if (v) el = v; else if (i) el = i; }
+
     if (el && (el.tagName === "IMG" || el.tagName === "VIDEO" || el.tagName === "IFRAME")) {
+      console.log("[Sidekick] click: matched media element tag=%s", el.tagName);
       const item = handleEl(el, e.clientX, e.clientY);
       disableCaptureMode(); if (item) showBarCaptured(item);
       return;
     }
 
-    // ── Priority 3: iframe positional hit-test (embedded players)
+    console.log("[Sidekick] click: no media element matched, trying iframe hit-test at (%d, %d)", e.clientX, e.clientY);
     const hit = iframeAtPoint(e.clientX, e.clientY);
     if (hit) {
+      console.log("[Sidekick] click: iframe hit-test matched, src:", hit.src);
       const item = handleEl(hit, e.clientX, e.clientY);
       disableCaptureMode(); if (item) showBarCaptured(item);
+    } else {
+      console.log("[Sidekick] click: no element matched. Ancestor chain:");
+        let dbgNode = e.target;
+        for (let i = 0; i < 10 && dbgNode; i++) {
+          console.log("  [%d] <%s> id=%s class=%s data=%s", i, dbgNode.tagName,
+            dbgNode.id, dbgNode.className,
+            JSON.stringify(Object.fromEntries(
+              [...(dbgNode.dataset ? Object.entries(dbgNode.dataset) : [])].slice(0, 4)
+            ))
+          );
+          dbgNode = dbgNode.parentElement;
+        }
     }
   }
 
   function onCaptureHover(e) {
-    // Only suppress default play-on-hover; don't block propagation so
-    // the element is still reachable by the click handler.
     if (!captureArmed) return;
     if (e.target?.tagName === "VIDEO") e.preventDefault();
   }
 
-  // ── Video platform helpers ────────────────────────────────────
-  // Given any URL string, return { videoId, platform, pageUrl, thumb }
-  // or null if not a recognised embed/watch URL.
-  function parseVideoUrl(url) {
-    if (!url) return null;
+  function unwrapRedirect(url) {
+    if (!url) return url;
     try {
       const u = new URL(url);
-      // YouTube: youtube.com/watch?v=ID  or  youtu.be/ID
-      //          youtube.com/embed/ID     or  www.youtube-nocookie.com/embed/ID
+      if (/google\./.test(u.hostname) && u.pathname === "/url") {
+        const q = u.searchParams.get("q") || u.searchParams.get("url");
+        if (q) return q;
+      }
+      if (/duckduckgo\.com/.test(u.hostname) && u.pathname === "/l/") {
+        const uddg = u.searchParams.get("uddg");
+        if (uddg) return decodeURIComponent(uddg);
+      }
+    } catch(_) {}
+    return url;
+  }
+
+  function findGoogleVideoCard(el) {
+      // Walk up the DOM looking for a Google video card with a resolvable URL
+      let node = el;
+      for (let i = 0; i < 12 && node; i++) {
+        // Check for data-url, data-href, or an <a> anywhere inside the card
+        const dataUrl = node.dataset && (node.dataset.url || node.dataset.href || node.dataset.pUrl);
+        if (dataUrl) {
+          console.log("[Sidekick] findGoogleVideoCard: found data-url:", dataUrl);
+          const info = parseVideoUrl(dataUrl);
+          if (info) {
+            const thumb = findThumbInCard(node) || info.thumb;
+            return { type: "video", content: info.pageUrl, thumb, platform: info.platform, pageUrl: location.href };
+          }
+        }
+
+        // Look for a real <a href> inside this card node
+        const anchor = node.querySelector && node.querySelector("a[href*='youtube.com'], a[href*='youtu.be'], a[href*='vimeo.com'], a[href*='dailymotion.com']");
+        if (anchor) {
+          console.log("[Sidekick] findGoogleVideoCard: found anchor inside card:", anchor.href);
+          const info = parseVideoUrl(anchor.href);
+          if (info) {
+            const thumb = findThumbInCard(node) || info.thumb;
+            return { type: "video", content: info.pageUrl, thumb, platform: info.platform, pageUrl: location.href };
+          }
+        }
+
+        // Check the node itself if it's an anchor
+        if (node.tagName === "A" && node.href) {
+          const info = parseVideoUrl(node.href);
+          if (info) {
+            const thumb = findThumbInCard(node) || info.thumb;
+            return { type: "video", content: info.pageUrl, thumb, platform: info.platform, pageUrl: location.href };
+          }
+        }
+
+        node = node.parentElement;
+      }
+      return null;
+    }
+
+    function findThumbInCard(cardEl) {
+      // Find the best thumbnail image within the card
+      const img = cardEl.querySelector && (
+        cardEl.querySelector("img[src*='ytimg'], img[src*='youtube'], img[src*='vi/'], img[data-src]") ||
+        cardEl.querySelector("img")
+      );
+      if (!img) return null;
+      const src = img.src || img.dataset.src || "";
+      // Skip tiny icons/avatars (under 60px)
+      if (img.naturalWidth > 0 && img.naturalWidth < 60) return null;
+      console.log("[Sidekick] findThumbInCard: found img src:", src.slice(0, 80));
+      return src || null;
+    }
+
+  function parseVideoUrl(url) {
+    if (!url) return null;
+    const unwrapped = unwrapRedirect(url);
+    if (unwrapped !== url) {
+      console.log("[Sidekick] parseVideoUrl: unwrapped redirect", url, "→", unwrapped);
+    }
+    url = unwrapped;
+    try {
+      const u = new URL(url);
       let m;
+
       if (/youtube\.com|youtube-nocookie\.com/.test(u.hostname)) {
         const id = u.searchParams.get("v") ||
                    (m = u.pathname.match(/\/(?:embed|shorts|v)\/([^/?&#]+)/)) && m[1];
-        if (id) return {
-          platform: "youtube", videoId: id,
-          pageUrl: `https://www.youtube.com/watch?v=${id}`,
-          thumb: `https://img.youtube.com/vi/${id}/hqdefault.jpg`
-        };
+        if (id) {
+          console.log("[Sidekick] parseVideoUrl: matched YouTube, videoId=%s", id);
+          return {
+            platform: "youtube", videoId: id,
+            pageUrl: `https://www.youtube.com/watch?v=${id}`,
+            thumb: `https://img.youtube.com/vi/${id}/hqdefault.jpg`
+          };
+        }
       }
+
       if (u.hostname === "youtu.be") {
         const id = u.pathname.slice(1).split(/[?&#]/)[0];
-        if (id) return {
-          platform: "youtube", videoId: id,
-          pageUrl: `https://www.youtube.com/watch?v=${id}`,
-          thumb: `https://img.youtube.com/vi/${id}/hqdefault.jpg`
-        };
+        if (id) {
+          console.log("[Sidekick] parseVideoUrl: matched youtu.be, videoId=%s", id);
+          return {
+            platform: "youtube", videoId: id,
+            pageUrl: `https://www.youtube.com/watch?v=${id}`,
+            thumb: `https://img.youtube.com/vi/${id}/hqdefault.jpg`
+          };
+        }
       }
-      // Vimeo: vimeo.com/ID  or  player.vimeo.com/video/ID
+
       if (/vimeo\.com/.test(u.hostname)) {
         const id = (m = u.pathname.match(/\/(?:video\/)?(\d+)/)) && m[1];
-        if (id) return {
-          platform: "vimeo", videoId: id,
-          pageUrl: `https://vimeo.com/${id}`,
-          // Vimeo thumbnails require API; use a reliable placeholder embed
-          thumb: null
-        };
+        if (id) {
+          console.log("[Sidekick] parseVideoUrl: matched Vimeo, videoId=%s", id);
+          return {
+            platform: "vimeo", videoId: id,
+            pageUrl: `https://vimeo.com/${id}`,
+            thumb: null
+          };
+        }
       }
-      // Dailymotion
+
       if (/dailymotion\.com/.test(u.hostname)) {
         const id = (m = u.pathname.match(/\/(?:embed\/video\/|video\/)([^/?&#]+)/)) && m[1];
-        if (id) return {
-          platform: "dailymotion", videoId: id,
-          pageUrl: `https://www.dailymotion.com/video/${id}`,
-          thumb: `https://www.dailymotion.com/thumbnail/video/${id}`
-        };
+        if (id) {
+          console.log("[Sidekick] parseVideoUrl: matched Dailymotion, videoId=%s", id);
+          return {
+            platform: "dailymotion", videoId: id,
+            pageUrl: `https://www.dailymotion.com/video/${id}`,
+            thumb: `https://www.dailymotion.com/thumbnail/video/${id}`
+          };
+        }
       }
+
+      console.log("[Sidekick] parseVideoUrl: no platform matched for", url);
     } catch(_) {}
     return null;
   }
 
-  // Find the <iframe> whose bounding rect contains the click point.
-  // Needed because clicks inside an iframe's content don't bubble to
-  // the parent page — e.target is always the <iframe> element itself
-  // (or nothing if sandboxed), so we hit-test by position instead.
   function iframeAtPoint(x, y) {
     for (const f of document.querySelectorAll("iframe")) {
       const r = f.getBoundingClientRect();
-      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return f;
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+        console.log("[Sidekick] iframeAtPoint: hit iframe src=%s at (%d,%d)", f.src, x, y);
+        return f;
+      }
     }
     return null;
   }
 
   function handleEl(el, clickX, clickY) {
     if (!el) return null;
+    console.log("[Sidekick] handleEl: processing element tag=%s", el.tagName);
 
     if (el.tagName === "IMG") {
+      console.log("[Sidekick] handleEl: capturing image src=%s", el.src);
       return saveCapturedData({ type: "image", content: el.src });
     }
 
     if (el.tagName === "VIDEO") {
-      // Try to grab the poster frame first, then fall back to a canvas snapshot
       const src = el.currentSrc || el.src || "";
+      console.log("[Sidekick] handleEl: capturing video src=%s, hasPoster=%s, videoWidth=%d", src, !!el.poster, el.videoWidth);
       let thumb = el.poster || null;
       if (!thumb && el.videoWidth > 0) {
         try {
@@ -1051,37 +1122,43 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
           c.width = el.videoWidth; c.height = el.videoHeight;
           c.getContext("2d").drawImage(el, 0, 0);
           thumb = c.toDataURL("image/jpeg", 0.8);
-        } catch(_) { /* cross-origin canvas taint — skip */ }
+          console.log("[Sidekick] handleEl: canvas snapshot taken for video thumbnail");
+        } catch(_) {
+          console.warn("[Sidekick] handleEl: canvas snapshot failed (likely cross-origin)");
+        }
+      } else if (!thumb) {
+        console.log("[Sidekick] handleEl: no poster and video not ready, no thumbnail");
+      } else {
+        console.log("[Sidekick] handleEl: using poster as thumbnail");
       }
       return saveCapturedData({ type: "video", content: src, thumb, pageUrl: location.href });
     }
 
-    // IFRAME — may be a known video embed
     if (el.tagName === "IFRAME") {
+      console.log("[Sidekick] handleEl: processing iframe src=%s", el.src);
       const info = parseVideoUrl(el.src);
       if (info) {
+        console.log("[Sidekick] handleEl: iframe is a known video embed, platform=%s videoId=%s", info.platform, info.videoId);
         return saveCapturedData({
           type: "video",
-          content: info.pageUrl,   // store the clean watch URL
+          content: info.pageUrl,
           thumb: info.thumb,
           platform: info.platform,
           embedSrc: el.src,
           pageUrl: location.href
         });
       }
-      // Unknown iframe — store as before
+      console.log("[Sidekick] handleEl: iframe is not a recognised video embed, saving as iframe type");
       return saveCapturedData({ type: "iframe", content: el.src });
     }
 
-    // Fallback: check if the click landed inside any iframe on the page
-    // (handles sandboxed iframes where e.target is the iframe itself
-    //  but tagName check above already covers that; this catches edge
-    //  cases where composedPath walk returned a non-iframe ancestor)
     if (clickX !== undefined) {
       const hit = iframeAtPoint(clickX, clickY);
       if (hit) {
+        console.log("[Sidekick] handleEl: fallback iframe hit at (%d,%d) src=%s", clickX, clickY, hit.src);
         const info = parseVideoUrl(hit.src);
         if (info) {
+          console.log("[Sidekick] handleEl: fallback iframe is a video embed, platform=%s", info.platform);
           return saveCapturedData({
             type: "video",
             content: info.pageUrl,
@@ -1096,13 +1173,16 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
     }
 
     const txt = window.getSelection().toString().trim() || lastSelectedText;
-    if (txt) { lastSelectedText = ""; return saveCapturedData({ type: "text", content: txt }); }
+    if (txt) {
+      console.log("[Sidekick] handleEl: falling back to text selection, length:", txt.length);
+      lastSelectedText = "";
+      return saveCapturedData({ type: "text", content: txt });
+    }
+
+    console.warn("[Sidekick] handleEl: nothing captured from element or selection");
     return null;
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // DOM UTILS
-  // ═══════════════════════════════════════════════════════════════
   function mk(tag, cls) {
     const e = document.createElement(tag);
     if (cls) e.className = cls;
@@ -1115,10 +1195,8 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
     const d = mk("div"); d.style.cssText = "display:flex;align-items:center;gap:4px;"; return d;
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // BOOT — called once chrome.storage.local.get() resolves
-  // ═══════════════════════════════════════════════════════════════
   function finishBoot() {
+    console.log("[Sidekick] Boot complete, rendering main view. Notebooks:", getData().notebooks.length, "Items:", getData().capturedItems.length);
     renderView("main");
   }
 
