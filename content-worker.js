@@ -1,4 +1,4 @@
-console.log("Sidekick content script new loaded");
+console.log("Sidekick content script loaded");
 
 if (!document.getElementById("sidekick-panel")) {
 
@@ -880,10 +880,31 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
       disableCaptureMode(); showBarCaptured(item);
       return;
     }
-    // If no text was selected, check if the pointer is over an iframe
-    // (covers YouTube/Vimeo embeds where the click event is eaten by the iframe)
+    // mouseup fires even when the iframe eats the click — use saved coords
+    // as fallback so iframeAtPoint always has a position to work with.
     const x = (e && e.clientX) || _lastDownX;
     const y = (e && e.clientY) || _lastDownY;
+    // Check for a video-link under the pointer (e.g. Google Search thumbnails)
+    const elAtPoint = document.elementFromPoint(x, y);
+    if (elAtPoint) {
+      const nearestLink = elAtPoint.closest && elAtPoint.closest("a[href]");
+      if (nearestLink && !panel.contains(nearestLink) && !captureBar.contains(nearestLink)) {
+        const info = parseVideoUrl(nearestLink.href);
+        if (info) {
+          const imgEl = nearestLink.querySelector("img") ||
+                        (elAtPoint.tagName === "IMG" ? elAtPoint : null);
+          const thumb = info.thumb || (imgEl ? imgEl.src : null);
+          const item = saveCapturedData({
+            type: "video", content: info.pageUrl, thumb,
+            platform: info.platform, pageUrl: location.href
+          });
+          disableCaptureMode();
+          if (item) showBarCaptured(item);
+          return;
+        }
+      }
+    }
+    // Fallback: iframe positional hit-test (embedded players)
     const hit = iframeAtPoint(x, y);
     if (hit && !panel.contains(hit) && !captureBar.contains(hit)) {
       const item = handleEl(hit, x, y);
@@ -896,22 +917,51 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
     if (!captureArmed) return;
     if (captureBar.contains(e.target)) return;
     e.preventDefault(); e.stopPropagation();
-    if (panel.contains(e.target)||arrow.contains(e.target)) return;
-    const path = typeof e.composedPath==="function"?e.composedPath():[];
+    if (panel.contains(e.target) || arrow.contains(e.target)) return;
+
+    // ── Priority 1: video link thumbnail (e.g. Google Search results,
+    //   Twitter cards, Reddit previews). These are plain <a><img> combos
+    //   with no iframe or <video> tag — detect by walking up to the nearest
+    //   <a> and checking if its href is a known video URL.
+    const nearestLink = e.target.closest && e.target.closest("a[href]");
+    if (nearestLink) {
+      const info = parseVideoUrl(nearestLink.href);
+      if (info) {
+        // Also grab the thumbnail image from inside the link if present
+        const imgEl = nearestLink.querySelector("img") ||
+                      (e.target.tagName === "IMG" ? e.target : null);
+        const thumb = info.thumb || (imgEl ? imgEl.src : null);
+        const item = saveCapturedData({
+          type: "video",
+          content: info.pageUrl,
+          thumb,
+          platform: info.platform,
+          pageUrl: location.href
+        });
+        disableCaptureMode();
+        if (item) showBarCaptured(item);
+        return;
+      }
+    }
+
+    // ── Priority 2: actual <video>, <img>, <iframe> elements
+    const composedPath = typeof e.composedPath === "function" ? e.composedPath() : [];
     let el = e.target;
-    for (const n of path) { if (n.tagName==="VIDEO"||n.tagName==="IMG"||n.tagName==="IFRAME"){el=n;break;} }
-    if (el?.closest) { const v=el.closest("video"),i=el.closest("img"); if(v)el=v; else if(i)el=i; }
-    if (el && (el.tagName==="IMG" || el.tagName==="VIDEO" || el.tagName==="IFRAME")) {
+    for (const n of composedPath) {
+      if (n.tagName === "VIDEO" || n.tagName === "IMG" || n.tagName === "IFRAME") { el = n; break; }
+    }
+    if (el?.closest) { const v = el.closest("video"), i = el.closest("img"); if (v) el = v; else if (i) el = i; }
+    if (el && (el.tagName === "IMG" || el.tagName === "VIDEO" || el.tagName === "IFRAME")) {
       const item = handleEl(el, e.clientX, e.clientY);
       disableCaptureMode(); if (item) showBarCaptured(item);
-    } else {
-      // Last-resort: user may have clicked inside a video iframe whose inner
-      // document consumed the event — positional hit-test catches it.
-      const hit = iframeAtPoint(e.clientX, e.clientY);
-      if (hit) {
-        const item = handleEl(hit, e.clientX, e.clientY);
-        disableCaptureMode(); if (item) showBarCaptured(item);
-      }
+      return;
+    }
+
+    // ── Priority 3: iframe positional hit-test (embedded players)
+    const hit = iframeAtPoint(e.clientX, e.clientY);
+    if (hit) {
+      const item = handleEl(hit, e.clientX, e.clientY);
+      disableCaptureMode(); if (item) showBarCaptured(item);
     }
   }
 
