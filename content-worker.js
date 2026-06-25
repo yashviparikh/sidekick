@@ -51,43 +51,73 @@ if (!document.getElementById("sidekick-panel")) {
 
     let isOpen = false;
 
-    arrow.addEventListener("click", () => {
-    isOpen = !isOpen;
-
-    if (isOpen) {
-        panel.style.transform = "translateX(0)";
-        arrow.style.transition = "right 0.3s ease";
-        arrow.style.right = "500px";
-        arrow.innerHTML = "▶";
-    } else {
-        panel.style.transform = "translateX(500px)";
-        arrow.style.right = "0";
-        arrow.innerHTML = "◀";
+    function openPanel() {
+      isOpen = true;
+      panel.style.transform = "translateX(0)";
+      arrow.style.transition = "right 0.3s ease";
+      arrow.style.right = "500px";
+      arrow.innerHTML = "▶";
     }
-});
-    // CAPTURE BUTTON
-	const captureBtn = document.createElement("button");
-captureBtn.innerText = "Capture";
-captureBtn.style.margin = "20px";
-captureBtn.style.padding = "10px 20px";
-captureBtn.style.cursor = "pointer";
-captureBtn.style.fontSize = "16px";
-captureBtn.style.color = "black";
 
-captureBtn.addEventListener("click", () => {
-  const selectedText = window.getSelection().toString().trim() || lastSelectedText;
-  if (selectedText.length > 0) {
-    saveCapturedData({
-      type: "text",
-      content: selectedText
+    function closePanel() {
+      isOpen = false;
+      panel.style.transform = "translateX(500px)";
+      arrow.style.right = "0";
+      arrow.innerHTML = "◀";
+    }
+
+    arrow.addEventListener("click", () => {
+      if (isOpen) closePanel();
+      else openPanel();
     });
-    lastSelectedText = "";
-    return;
-  }
-  enableCaptureMode();
-});
 
-	panel.appendChild(captureBtn);
+    // BUTTON ROW
+    const buttonRow = document.createElement("div");
+    buttonRow.style.display = "flex";
+    buttonRow.style.gap = "10px";
+    buttonRow.style.padding = "20px";
+
+    // CAPTURE BUTTON
+    const captureBtn = document.createElement("button");
+    captureBtn.innerText = "Capture";
+    captureBtn.style.padding = "10px 20px";
+    captureBtn.style.cursor = "pointer";
+    captureBtn.style.fontSize = "16px";
+    captureBtn.style.color = "black";
+
+    captureBtn.addEventListener("click", () => {
+      const selectedText = window.getSelection().toString().trim() || lastSelectedText;
+      if (selectedText.length > 0) {
+        saveCapturedData({
+          type: "text",
+          content: selectedText
+        });
+        lastSelectedText = "";
+        return;
+      }
+      closePanel(); // ← auto-close so the page is fully visible
+      enableCaptureMode();
+    });
+
+    // CLEAR BUTTON
+    const clearBtn = document.createElement("button");
+    clearBtn.innerText = "Clear";
+    clearBtn.style.padding = "10px 20px";
+    clearBtn.style.cursor = "pointer";
+    clearBtn.style.fontSize = "16px";
+    clearBtn.style.color = "white";
+    clearBtn.style.background = "#c0392b";
+    clearBtn.style.border = "none";
+    clearBtn.style.borderRadius = "4px";
+
+    clearBtn.addEventListener("click", () => {
+      sessionStorage.removeItem("capturedItems");
+      renderCapturedList([]);
+    });
+
+    buttonRow.appendChild(captureBtn);
+    buttonRow.appendChild(clearBtn);
+    panel.appendChild(buttonRow);
 
   // CAPTURED LIST
   const capturedList = document.createElement("div");
@@ -117,7 +147,7 @@ function enableCaptureMode() {
     left: "0",
     width: "100vw",
     height: "100vh",
-    background: "rgba(0,0,0,0.05)", // light tint indicator
+    background: "rgba(0,0,0,0.05)",
     pointerEvents: "none",
     zIndex: "999999"
   });
@@ -126,6 +156,7 @@ function enableCaptureMode() {
   document.addEventListener("click", onCaptureClick, true);
   document.addEventListener("mouseover", onCaptureHover, true);
   document.addEventListener("mousemove", onCaptureHover, true);
+  document.addEventListener("keydown", onCaptureKeyDown, true); // ← Escape listener
 }
 
 function disableCaptureMode() {
@@ -144,6 +175,14 @@ function disableCaptureMode() {
   document.removeEventListener("click", onCaptureClick, true);
   document.removeEventListener("mouseover", onCaptureHover, true);
   document.removeEventListener("mousemove", onCaptureHover, true);
+  document.removeEventListener("keydown", onCaptureKeyDown, true); // ← cleanup
+}
+
+// ESCAPE KEY handler
+function onCaptureKeyDown(e) {
+  if (e.key === "Escape") {
+    disableCaptureMode();
+  }
 }
 
 function isSelectionInsidePanel() {
@@ -212,7 +251,6 @@ function onCaptureHover(e) {
 	function handleCapturedElement(element) {
 	  if (!element) return;
 
-  // 1️⃣ If image
   if (element.tagName === "IMG") {
     console.log("Captured image:", element.src);
     saveCapturedData({
@@ -222,7 +260,6 @@ function onCaptureHover(e) {
     return;
   }
 
-	  // 2️⃣ If video
 	  if (element.tagName === "VIDEO") {
 	    console.log("Captured video:", element.currentSrc);
 	    saveCapturedData({
@@ -232,7 +269,6 @@ function onCaptureHover(e) {
 	    return;
 	  }
 
-  // 2b️⃣ If iframe (e.g., video embeds)
   if (element.tagName === "IFRAME") {
     console.log("Captured iframe:", element.src);
     saveCapturedData({
@@ -242,7 +278,6 @@ function onCaptureHover(e) {
     return;
   }
 
-  // 3️⃣ If text selected
   const selectedText = window.getSelection().toString().trim() || lastSelectedText;
   if (selectedText.length > 0) {
     console.log("Captured text:", selectedText);
