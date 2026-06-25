@@ -1,4 +1,4 @@
-console.log("Sidekick content script loaded");
+console.log("Sidekick content script new loaded");
 
 if (!document.getElementById("sidekick-panel")) {
 
@@ -13,6 +13,26 @@ if (!document.getElementById("sidekick-panel")) {
   // ═══════════════════════════════════════════════════════════════
   const STORAGE_KEY = "sidekick_data";
   let _cache = null; // populated during boot, never null afterwards
+  let _contextAlive = true; // set to false when extension is reloaded/updated
+
+  // Guard: returns true if the extension context is still valid.
+  // When an extension is reloaded/updated while a tab is open, all
+  // chrome.* APIs throw "Extension context invalidated". We detect this
+  // once and then stop calling chrome.* entirely for this page session.
+  // The in-memory _cache continues to work for the rest of the session.
+  function contextOk() {
+    if (!_contextAlive) return false;
+    try {
+      // Cheapest possible API call — just reads a string, never throws
+      // under normal circumstances.
+      void chrome.runtime.id;
+      return true;
+    } catch (_) {
+      _contextAlive = false;
+      console.warn("[Sidekick] Extension context invalidated — storage sync disabled until page reload.");
+      return false;
+    }
+  }
 
   function getData() {
     return _cache;
@@ -20,9 +40,11 @@ if (!document.getElementById("sidekick-panel")) {
 
   function setData(d) {
     _cache = d;
-    // Async write — fire and forget; errors are non-fatal
-    chrome.storage.local.set({ [STORAGE_KEY]: d }).catch(err => {
-      console.warn("[Sidekick] storage write failed:", err);
+    if (!contextOk()) return; // cache updated above; just skip the disk write
+    chrome.storage.local.set({ [STORAGE_KEY]: d }, () => {
+      if (chrome.runtime.lastError) {
+        console.warn("[Sidekick] storage write failed:", chrome.runtime.lastError);
+      }
     });
   }
 
@@ -33,18 +55,17 @@ if (!document.getElementById("sidekick-panel")) {
 
   // Keep other tabs in sync: when storage changes externally, pull
   // the new value into our cache and re-render the current view.
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== "local" || !changes[STORAGE_KEY]) return;
-    const incoming = changes[STORAGE_KEY].newValue;
-    if (!incoming) return;
-    // Only update if the change came from another tab (our own
-    // writes already updated _cache before the async push).
-    // We detect "foreign" writes by comparing JSON snapshots.
-    if (JSON.stringify(incoming) !== JSON.stringify(_cache)) {
-      _cache = incoming;
-      renderView(currentView); // re-render so the user sees the latest
-    }
-  });
+  if (contextOk()) {
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== "local" || !changes[STORAGE_KEY]) return;
+      const incoming = changes[STORAGE_KEY].newValue;
+      if (!incoming) return;
+      if (JSON.stringify(incoming) !== JSON.stringify(_cache)) {
+        _cache = incoming;
+        renderView(currentView);
+      }
+    });
+  }
 
   // ── Boot sequence ─────────────────────────────────────────────
   // Everything is deferred until storage resolves. We mount a
@@ -54,15 +75,25 @@ if (!document.getElementById("sidekick-panel")) {
       _cache = storedData;
     } else {
       _cache = initData();
-      chrome.storage.local.set({ [STORAGE_KEY]: _cache });
+      if (contextOk()) {
+        chrome.storage.local.set({ [STORAGE_KEY]: _cache }, () => {
+          if (chrome.runtime.lastError) console.warn("[Sidekick] boot write failed:", chrome.runtime.lastError);
+        });
+      }
     }
     purgeBin();
     finishBoot();
   }
 
-  chrome.storage.local.get(STORAGE_KEY, result => {
-    boot(result[STORAGE_KEY] || null);
-  });
+  if (contextOk()) {
+    chrome.storage.local.get(STORAGE_KEY, result => {
+      boot(result[STORAGE_KEY] || null);
+    });
+  } else {
+    // Context already dead on load (extension reloaded before this ran) —
+    // start fresh from an empty in-memory state so the UI still works.
+    boot(null);
+  }
 
   // ─────────────────────────────────────────────────────────────
   // Everything below is identical to the original except:
@@ -329,8 +360,13 @@ if (!document.getElementById("sidekick-panel")) {
     const saveBtn = mk("button", "sk-btn");
     saveBtn.textContent = "💾 Save";
     saveBtn.addEventListener("click", () => {
-      // Force a write to storage even if nothing changed (safety flush)
-      chrome.storage.local.set({ [STORAGE_KEY]: getData() }).then(() => {
+      if (!contextOk()) {
+        saveBtn.textContent = "⚠ Reload tab";
+        setTimeout(() => { saveBtn.textContent = "💾 Save"; }, 2000);
+        return;
+      }
+      chrome.storage.local.set({ [STORAGE_KEY]: getData() }, () => {
+        if (chrome.runtime.lastError) { console.error(chrome.runtime.lastError); return; }
         saveBtn.textContent = "✓ Saved!";
         setTimeout(() => { saveBtn.textContent = "💾 Save"; }, 1400);
       });
@@ -385,6 +421,26 @@ if (!document.getElementById("sidekick-panel")) {
       const img = mk("img"); img.src = note.content;
       Object.assign(img.style, { maxWidth: "100%", maxHeight: "130px", borderRadius: "4px", display: "block" });
       body.appendChild(img);
+    } else if (note.type === "video") {
+      // Thumbnail wrapper links to the clean watch URL
+      const watchUrl = note.content || note.pageUrl || "";
+      const wrap = mk("a"); wrap.href = watchUrl; wrap.target = "_blank"; wrap.rel = "noopener noreferrer";
+      wrap.style.cssText = "display:block;position:relative;text-decoration:none;";
+      if (note.thumb) {
+        const thumb = mk("img"); thumb.src = note.thumb;
+        Object.assign(thumb.style, { maxWidth: "100%", maxHeight: "130px", borderRadius: "6px", display: "block", objectFit: "cover" });
+        const play = mk("div");
+        play.style.cssText = "position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:40px;height:40px;background:rgba(0,0,0,0.65);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;color:#fff;pointer-events:none;";
+        play.textContent = "\u25b6";
+        wrap.append(thumb, play);
+      } else {
+        const pill = mk("div");
+        pill.style.cssText = "background:#fce7f3;color:#9d174d;border-radius:6px;padding:10px 12px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:8px;";
+        const short = watchUrl.slice(0, 60) + (watchUrl.length > 60 ? "\u2026" : "");
+        pill.innerHTML = `<span style="font-size:20px">\ud83c\udfa6</span><span>${esc(short)}</span>`;
+        wrap.appendChild(pill);
+      }
+      body.appendChild(wrap);
     } else {
       body.textContent = note.content.slice(0, 180) + (note.content.length > 180 ? "…" : "");
     }
@@ -772,6 +828,15 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
   // ═══════════════════════════════════════════════════════════════
   // CAPTURE MODE
   // ═══════════════════════════════════════════════════════════════
+  // Track last mousedown position so iframe hit-test works even when
+  // the click event is swallowed by the iframe's document.
+  let _lastDownX = 0, _lastDownY = 0;
+  function onCaptureMouseDown(e) {
+    if (!captureArmed) return;
+    _lastDownX = e.clientX;
+    _lastDownY = e.clientY;
+  }
+
   function enableCaptureMode() {
     if (captureArmed) return; captureArmed = true;
     captureStyleEl = mk("style");
@@ -780,6 +845,7 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
     captureOverlay = mk("div");
     Object.assign(captureOverlay.style, { position:"fixed", top:"0", left:"0", width:"100vw", height:"100vh", background:"rgba(0,0,0,0.03)", pointerEvents:"none", zIndex:"999997" });
     document.body.appendChild(captureOverlay);
+    document.addEventListener("mousedown", onCaptureMouseDown, true);
     document.addEventListener("mouseup", onCaptureMouseUp, true);
     document.addEventListener("click", onCaptureClick, true);
     document.addEventListener("mouseover", onCaptureHover, true);
@@ -790,6 +856,7 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
     if (!captureArmed) return; captureArmed = false;
     if (captureStyleEl) { captureStyleEl.remove(); captureStyleEl = null; }
     if (captureOverlay) { captureOverlay.remove(); captureOverlay = null; }
+    document.removeEventListener("mousedown", onCaptureMouseDown, true);
     document.removeEventListener("mouseup", onCaptureMouseUp, true);
     document.removeEventListener("click", onCaptureClick, true);
     document.removeEventListener("mouseover", onCaptureHover, true);
@@ -805,12 +872,23 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
     return !!(el&&panel.contains(el));
   }
 
-  function onCaptureMouseUp() {
+  function onCaptureMouseUp(e) {
     if (!captureArmed) return;
     const txt = window.getSelection().toString().trim() || lastSelectedText;
-    if (txt&&!isInsidePanel()) {
+    if (txt && !isInsidePanel()) {
       const item = saveCapturedData({ type:"text", content:txt }); lastSelectedText = "";
       disableCaptureMode(); showBarCaptured(item);
+      return;
+    }
+    // If no text was selected, check if the pointer is over an iframe
+    // (covers YouTube/Vimeo embeds where the click event is eaten by the iframe)
+    const x = (e && e.clientX) || _lastDownX;
+    const y = (e && e.clientY) || _lastDownY;
+    const hit = iframeAtPoint(x, y);
+    if (hit && !panel.contains(hit) && !captureBar.contains(hit)) {
+      const item = handleEl(hit, x, y);
+      disableCaptureMode();
+      if (item) showBarCaptured(item);
     }
   }
 
@@ -823,20 +901,152 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
     let el = e.target;
     for (const n of path) { if (n.tagName==="VIDEO"||n.tagName==="IMG"||n.tagName==="IFRAME"){el=n;break;} }
     if (el?.closest) { const v=el.closest("video"),i=el.closest("img"); if(v)el=v; else if(i)el=i; }
-    if (el&&(el.tagName==="IMG"||el.tagName==="VIDEO"||el.tagName==="IFRAME")) {
-      const item = handleEl(el); disableCaptureMode(); if(item) showBarCaptured(item);
+    if (el && (el.tagName==="IMG" || el.tagName==="VIDEO" || el.tagName==="IFRAME")) {
+      const item = handleEl(el, e.clientX, e.clientY);
+      disableCaptureMode(); if (item) showBarCaptured(item);
+    } else {
+      // Last-resort: user may have clicked inside a video iframe whose inner
+      // document consumed the event — positional hit-test catches it.
+      const hit = iframeAtPoint(e.clientX, e.clientY);
+      if (hit) {
+        const item = handleEl(hit, e.clientX, e.clientY);
+        disableCaptureMode(); if (item) showBarCaptured(item);
+      }
     }
   }
 
-  function onCaptureHover(e) { if (!captureArmed) return; if(e.target?.tagName==="VIDEO"){e.preventDefault();e.stopImmediatePropagation();} }
+  function onCaptureHover(e) {
+    // Only suppress default play-on-hover; don't block propagation so
+    // the element is still reachable by the click handler.
+    if (!captureArmed) return;
+    if (e.target?.tagName === "VIDEO") e.preventDefault();
+  }
 
-  function handleEl(el) {
+  // ── Video platform helpers ────────────────────────────────────
+  // Given any URL string, return { videoId, platform, pageUrl, thumb }
+  // or null if not a recognised embed/watch URL.
+  function parseVideoUrl(url) {
+    if (!url) return null;
+    try {
+      const u = new URL(url);
+      // YouTube: youtube.com/watch?v=ID  or  youtu.be/ID
+      //          youtube.com/embed/ID     or  www.youtube-nocookie.com/embed/ID
+      let m;
+      if (/youtube\.com|youtube-nocookie\.com/.test(u.hostname)) {
+        const id = u.searchParams.get("v") ||
+                   (m = u.pathname.match(/\/(?:embed|shorts|v)\/([^/?&#]+)/)) && m[1];
+        if (id) return {
+          platform: "youtube", videoId: id,
+          pageUrl: `https://www.youtube.com/watch?v=${id}`,
+          thumb: `https://img.youtube.com/vi/${id}/hqdefault.jpg`
+        };
+      }
+      if (u.hostname === "youtu.be") {
+        const id = u.pathname.slice(1).split(/[?&#]/)[0];
+        if (id) return {
+          platform: "youtube", videoId: id,
+          pageUrl: `https://www.youtube.com/watch?v=${id}`,
+          thumb: `https://img.youtube.com/vi/${id}/hqdefault.jpg`
+        };
+      }
+      // Vimeo: vimeo.com/ID  or  player.vimeo.com/video/ID
+      if (/vimeo\.com/.test(u.hostname)) {
+        const id = (m = u.pathname.match(/\/(?:video\/)?(\d+)/)) && m[1];
+        if (id) return {
+          platform: "vimeo", videoId: id,
+          pageUrl: `https://vimeo.com/${id}`,
+          // Vimeo thumbnails require API; use a reliable placeholder embed
+          thumb: null
+        };
+      }
+      // Dailymotion
+      if (/dailymotion\.com/.test(u.hostname)) {
+        const id = (m = u.pathname.match(/\/(?:embed\/video\/|video\/)([^/?&#]+)/)) && m[1];
+        if (id) return {
+          platform: "dailymotion", videoId: id,
+          pageUrl: `https://www.dailymotion.com/video/${id}`,
+          thumb: `https://www.dailymotion.com/thumbnail/video/${id}`
+        };
+      }
+    } catch(_) {}
+    return null;
+  }
+
+  // Find the <iframe> whose bounding rect contains the click point.
+  // Needed because clicks inside an iframe's content don't bubble to
+  // the parent page — e.target is always the <iframe> element itself
+  // (or nothing if sandboxed), so we hit-test by position instead.
+  function iframeAtPoint(x, y) {
+    for (const f of document.querySelectorAll("iframe")) {
+      const r = f.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return f;
+    }
+    return null;
+  }
+
+  function handleEl(el, clickX, clickY) {
     if (!el) return null;
-    if (el.tagName==="IMG") return saveCapturedData({ type:"image", content:el.src });
-    if (el.tagName==="VIDEO") return saveCapturedData({ type:"video", content:el.currentSrc });
-    if (el.tagName==="IFRAME") return saveCapturedData({ type:"iframe", content:el.src });
-    const txt = window.getSelection().toString().trim()||lastSelectedText;
-    if (txt) { lastSelectedText=""; return saveCapturedData({ type:"text", content:txt }); }
+
+    if (el.tagName === "IMG") {
+      return saveCapturedData({ type: "image", content: el.src });
+    }
+
+    if (el.tagName === "VIDEO") {
+      // Try to grab the poster frame first, then fall back to a canvas snapshot
+      const src = el.currentSrc || el.src || "";
+      let thumb = el.poster || null;
+      if (!thumb && el.videoWidth > 0) {
+        try {
+          const c = document.createElement("canvas");
+          c.width = el.videoWidth; c.height = el.videoHeight;
+          c.getContext("2d").drawImage(el, 0, 0);
+          thumb = c.toDataURL("image/jpeg", 0.8);
+        } catch(_) { /* cross-origin canvas taint — skip */ }
+      }
+      return saveCapturedData({ type: "video", content: src, thumb, pageUrl: location.href });
+    }
+
+    // IFRAME — may be a known video embed
+    if (el.tagName === "IFRAME") {
+      const info = parseVideoUrl(el.src);
+      if (info) {
+        return saveCapturedData({
+          type: "video",
+          content: info.pageUrl,   // store the clean watch URL
+          thumb: info.thumb,
+          platform: info.platform,
+          embedSrc: el.src,
+          pageUrl: location.href
+        });
+      }
+      // Unknown iframe — store as before
+      return saveCapturedData({ type: "iframe", content: el.src });
+    }
+
+    // Fallback: check if the click landed inside any iframe on the page
+    // (handles sandboxed iframes where e.target is the iframe itself
+    //  but tagName check above already covers that; this catches edge
+    //  cases where composedPath walk returned a non-iframe ancestor)
+    if (clickX !== undefined) {
+      const hit = iframeAtPoint(clickX, clickY);
+      if (hit) {
+        const info = parseVideoUrl(hit.src);
+        if (info) {
+          return saveCapturedData({
+            type: "video",
+            content: info.pageUrl,
+            thumb: info.thumb,
+            platform: info.platform,
+            embedSrc: hit.src,
+            pageUrl: location.href
+          });
+        }
+        return saveCapturedData({ type: "iframe", content: hit.src });
+      }
+    }
+
+    const txt = window.getSelection().toString().trim() || lastSelectedText;
+    if (txt) { lastSelectedText = ""; return saveCapturedData({ type: "text", content: txt }); }
     return null;
   }
 
