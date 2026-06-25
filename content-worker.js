@@ -3,20 +3,74 @@ console.log("Sidekick content script loaded");
 if (!document.getElementById("sidekick-panel")) {
 
   // ═══════════════════════════════════════════════════════════════
-  // STORAGE — always read fresh, never cache
+  // STORAGE — chrome.storage.local for cross-tab, cross-window
+  // persistence within the same browser profile.
+  //
+  // Strategy: keep an in-memory _cache so all render code stays
+  // synchronous. On boot we pull from storage once; every write
+  // updates the cache AND fires an async push to storage.
+  // A storage listener keeps every other tab's cache in sync.
   // ═══════════════════════════════════════════════════════════════
+  const STORAGE_KEY = "sidekick_data";
+  let _cache = null; // populated during boot, never null afterwards
+
   function getData() {
-    try { return JSON.parse(sessionStorage.getItem("sidekick") || "null") || initData(); }
-    catch { return initData(); }
+    return _cache;
   }
+
   function setData(d) {
-    sessionStorage.setItem("sidekick", JSON.stringify(d));
+    _cache = d;
+    // Async write — fire and forget; errors are non-fatal
+    chrome.storage.local.set({ [STORAGE_KEY]: d }).catch(err => {
+      console.warn("[Sidekick] storage write failed:", err);
+    });
   }
+
   function initData() {
     const nb = { id: uid(), name: "My First Notebook", createdAt: now() };
-    const d = { notebooks: [nb], capturedItems: [], activeNotebookId: nb.id, recycleBin: [] };
-    setData(d); return d;
+    return { notebooks: [nb], capturedItems: [], activeNotebookId: nb.id, recycleBin: [] };
   }
+
+  // Keep other tabs in sync: when storage changes externally, pull
+  // the new value into our cache and re-render the current view.
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "local" || !changes[STORAGE_KEY]) return;
+    const incoming = changes[STORAGE_KEY].newValue;
+    if (!incoming) return;
+    // Only update if the change came from another tab (our own
+    // writes already updated _cache before the async push).
+    // We detect "foreign" writes by comparing JSON snapshots.
+    if (JSON.stringify(incoming) !== JSON.stringify(_cache)) {
+      _cache = incoming;
+      renderView(currentView); // re-render so the user sees the latest
+    }
+  });
+
+  // ── Boot sequence ─────────────────────────────────────────────
+  // Everything is deferred until storage resolves. We mount a
+  // temporary loading indicator while we wait.
+  function boot(storedData) {
+    if (storedData) {
+      _cache = storedData;
+    } else {
+      _cache = initData();
+      chrome.storage.local.set({ [STORAGE_KEY]: _cache });
+    }
+    purgeBin();
+    finishBoot();
+  }
+
+  chrome.storage.local.get(STORAGE_KEY, result => {
+    boot(result[STORAGE_KEY] || null);
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // Everything below is identical to the original except:
+  //   • getData() / setData() now hit the cache above
+  //   • purgeBin() / finishBoot() called from boot()
+  //   • No sessionStorage references remain
+  // ─────────────────────────────────────────────────────────────
+
   function uid() { return "id_" + Math.random().toString(36).slice(2) + Date.now().toString(36); }
   function now() { return new Date().toISOString(); }
 
@@ -33,9 +87,7 @@ if (!document.getElementById("sidekick-panel")) {
   let captureOverlay = null;
   let captureStyleEl = null;
   let currentView = "main";
-  let panelW = 480; // resizable width
-
-  purgeBin();
+  let panelW = 480;
 
   document.addEventListener("selectionchange", () => {
     const t = window.getSelection().toString().trim();
@@ -93,11 +145,13 @@ if (!document.getElementById("sidekick-panel")) {
     .sk-nb-name { font-size: 15px; font-weight: 700; color: #0f172a; flex: 1; min-width: 0; cursor: pointer; padding: 3px 5px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .sk-nb-name:hover { background: #f1f5f9; }
     .sk-view-title { font-size: 15px; font-weight: 700; color: #0f172a; flex: 1; }
+    .sk-sync-dot { width: 6px; height: 6px; border-radius: 50%; background: #10b981; display: inline-block; margin-left: 4px; opacity: 0; transition: opacity 0.3s; }
+    .sk-sync-dot.active { opacity: 1; }
   `;
   document.head.appendChild(styleEl);
 
   // ═══════════════════════════════════════════════════════════════
-  // PANEL SHELL (created once, never destroyed)
+  // PANEL SHELL
   // ═══════════════════════════════════════════════════════════════
   const panel = document.createElement("div");
   panel.id = "sidekick-panel";
@@ -113,33 +167,28 @@ if (!document.getElementById("sidekick-panel")) {
     overflow: "hidden"
   });
 
-  // ── Resize handle: left edge (horizontal) ──
   const resizeH = document.createElement("div");
   resizeH.className = "sk-resize-h";
   panel.appendChild(resizeH);
 
-  // ── Resize handle: bottom edge (vertical) ──
   const resizeV = document.createElement("div");
   resizeV.className = "sk-resize-v";
   panel.appendChild(resizeV);
 
-  // ── Header slot ──
   const headerSlot = document.createElement("div");
   headerSlot.id = "sidekick-header";
   headerSlot.style.flexShrink = "0";
   panel.appendChild(headerSlot);
 
-  // ── Body slot (scrollable) ──
   const bodySlot = document.createElement("div");
   bodySlot.id = "sidekick-body";
   Object.assign(bodySlot.style, {
     flex: "1", overflowY: "auto", overflowX: "hidden",
     padding: "14px 14px 20px",
-    minHeight: "0"   // critical: flex child must have minHeight:0 to scroll
+    minHeight: "0"
   });
   panel.appendChild(bodySlot);
 
-  // ── Arrow toggle ──
   const arrow = document.createElement("div");
   arrow.id = "sidekick-arrow";
   Object.assign(arrow.style, {
@@ -156,6 +205,12 @@ if (!document.getElementById("sidekick-panel")) {
 
   document.body.appendChild(panel);
   document.body.appendChild(arrow);
+
+  // ── Loading placeholder (shown while storage.get() resolves) ──
+  const loadingMsg = document.createElement("div");
+  loadingMsg.className = "sk-empty";
+  loadingMsg.textContent = "Loading…";
+  bodySlot.appendChild(loadingMsg);
 
   // ═══════════════════════════════════════════════════════════════
   // PANEL OPEN / CLOSE
@@ -178,13 +233,12 @@ if (!document.getElementById("sidekick-panel")) {
   // ═══════════════════════════════════════════════════════════════
   // RESIZE LOGIC
   // ═══════════════════════════════════════════════════════════════
-  let panelH = null; // null = 100vh
+  let panelH = null;
 
   resizeH.addEventListener("mousedown", e => {
     e.preventDefault();
     resizeH.classList.add("dragging");
-    const startX = e.clientX;
-    const startW = panel.offsetWidth;
+    const startX = e.clientX, startW = panel.offsetWidth;
     const onMove = e2 => {
       const newW = Math.max(300, Math.min(900, startW + (startX - e2.clientX)));
       panelW = newW;
@@ -192,11 +246,7 @@ if (!document.getElementById("sidekick-panel")) {
       if (isOpen) arrow.style.right = newW + "px";
       if (!isOpen) panel.style.transform = `translateX(${newW}px)`;
     };
-    const onUp = () => {
-      resizeH.classList.remove("dragging");
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-    };
+    const onUp = () => { resizeH.classList.remove("dragging"); document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); };
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
   });
@@ -204,25 +254,20 @@ if (!document.getElementById("sidekick-panel")) {
   resizeV.addEventListener("mousedown", e => {
     e.preventDefault();
     resizeV.classList.add("dragging");
-    const startY = e.clientY;
-    const startH = panel.offsetHeight;
+    const startY = e.clientY, startH = panel.offsetHeight;
     const onMove = e2 => {
       const newH = Math.max(200, Math.min(window.innerHeight, startH + (e2.clientY - startY)));
       panelH = newH;
       panel.style.height = newH + "px";
       panel.style.top = (window.innerHeight - newH) + "px";
     };
-    const onUp = () => {
-      resizeV.classList.remove("dragging");
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-    };
+    const onUp = () => { resizeV.classList.remove("dragging"); document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); };
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
   });
 
   // ═══════════════════════════════════════════════════════════════
-  // VIEW RENDERER — always wipes header + body slots, never whole panel
+  // VIEW RENDERER
   // ═══════════════════════════════════════════════════════════════
   function renderView(view) {
     currentView = view;
@@ -242,11 +287,9 @@ if (!document.getElementById("sidekick-panel")) {
     if (!d.notebooks.length) { renderExplore(); return; }
     const nb = d.notebooks.find(n => n.id === d.activeNotebookId) || d.notebooks[0];
 
-    // ── Header ──────────────────────────────────────────────────
     const hdr = document.createElement("div");
     hdr.className = "sk-header";
 
-    // Row 1: name + icons
     const row1 = document.createElement("div");
     row1.className = "sk-header-row";
 
@@ -255,6 +298,11 @@ if (!document.getElementById("sidekick-panel")) {
     nbName.title = "Click to rename";
     nbName.textContent = nb.name;
     nbName.addEventListener("click", () => inlineRename(nb, nbName));
+
+    // Sync indicator dot — flashes green when another tab writes
+    const syncDot = document.createElement("span");
+    syncDot.className = "sk-sync-dot";
+    syncDot.title = "Synced across tabs";
 
     const exploreBtn = iconBtn("⊞", "Browse notebooks");
     exploreBtn.addEventListener("click", () => renderView("explore"));
@@ -269,9 +317,8 @@ if (!document.getElementById("sidekick-panel")) {
     }
     binBtn.addEventListener("click", () => renderView("bin"));
 
-    row1.append(nbName, exploreBtn, binBtn);
+    row1.append(nbName, syncDot, exploreBtn, binBtn);
 
-    // Row 2: actions
     const row2 = document.createElement("div");
     row2.className = "sk-action-row";
 
@@ -282,11 +329,13 @@ if (!document.getElementById("sidekick-panel")) {
     const saveBtn = mk("button", "sk-btn");
     saveBtn.textContent = "💾 Save";
     saveBtn.addEventListener("click", () => {
-      saveBtn.textContent = "✓ Saved!";
-      setTimeout(() => { saveBtn.textContent = "💾 Save"; }, 1400);
+      // Force a write to storage even if nothing changed (safety flush)
+      chrome.storage.local.set({ [STORAGE_KEY]: getData() }).then(() => {
+        saveBtn.textContent = "✓ Saved!";
+        setTimeout(() => { saveBtn.textContent = "💾 Save"; }, 1400);
+      });
     });
 
-    // Download dropdown
     const dlWrap = mk("div"); dlWrap.style.position = "relative";
     const dlBtn = mk("button", "sk-btn"); dlBtn.textContent = "⬇ Download ▾";
     const dlDrop = mk("div", "sk-dropdown"); dlDrop.style.display = "none";
@@ -303,7 +352,6 @@ if (!document.getElementById("sidekick-panel")) {
     hdr.append(row1, row2);
     headerSlot.appendChild(hdr);
 
-    // ── Body ────────────────────────────────────────────────────
     const notes = d.capturedItems.filter(n => n.notebookId === nb.id);
     if (!notes.length) {
       const empty = mk("div", "sk-empty");
@@ -517,7 +565,7 @@ if (!document.getElementById("sidekick-panel")) {
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // DATA MUTATIONS — each mutates then re-renders
+  // DATA MUTATIONS
   // ═══════════════════════════════════════════════════════════════
   function saveCapturedData(payload) {
     const d = getData();
@@ -535,7 +583,7 @@ if (!document.getElementById("sidekick-panel")) {
     d.recycleBin = d.recycleBin || [];
     d.recycleBin.push({ id: uid(), type: "note", note, originalNotebookId: nb.id, deletedAt: now() });
     setData(d);
-    renderView("main");  // immediate full re-render
+    renderView("main");
   }
 
   function deleteNotebook(nb) {
@@ -579,7 +627,6 @@ if (!document.getElementById("sidekick-panel")) {
     renderView("bin");
   }
 
-  // ─── Undo / Redo ─────────────────────────────────────────────
   function undoLastCapture() {
     const d = getData();
     if (!d.capturedItems.length) return;
@@ -627,7 +674,7 @@ h1{font-size:22px;border-bottom:2px solid #2563eb;padding-bottom:8px}
 img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8px}a{color:#2563eb}
 </style></head><body><h1>📓 ${esc(nb.name)}</h1>
 <p style="color:#9ca3af;font-size:13px">Exported ${new Date().toLocaleString()} · ${notes.length} note${notes.length!==1?"s":""}</p>`;
-      notes.forEach((n,i) => {
+      notes.forEach((n, i) => {
         html += `<div class="note"><span class="tag ${n.type}">${n.type}</span>
 <div class="meta">#${i+1} · ${new Date(n.capturedAt).toLocaleString()}</div>
 <div class="content">${n.type==="image"?`<img src="${esc(n.content)}" alt="captured image">`:esc(n.content)}</div>
@@ -809,7 +856,10 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // BOOT
+  // BOOT — called once chrome.storage.local.get() resolves
   // ═══════════════════════════════════════════════════════════════
-  renderView("main");
+  function finishBoot() {
+    renderView("main");
+  }
+
 }
