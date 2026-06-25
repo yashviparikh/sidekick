@@ -6,305 +6,443 @@ if (!document.getElementById("sidekick-panel")) {
   let captureOverlay = null;
   let captureStyleEl = null;
 
+  // ── Undo/Redo stack ──────────────────────────────────────────────────────────
+  // undoStack: items removed by undo (can be re-added by redo)
+  let undoStack = [];
+
   document.addEventListener("selectionchange", () => {
     const text = window.getSelection().toString().trim();
-    if (text) {
-      lastSelectedText = text;
-    }
+    if (text) lastSelectedText = text;
   });
 
-    // PANEL
-    const panel = document.createElement("div");
-    panel.id = "sidekick-panel";
+  // ── PANEL ────────────────────────────────────────────────────────────────────
+  const panel = document.createElement("div");
+  panel.id = "sidekick-panel";
+  Object.assign(panel.style, {
+    position: "fixed", top: "0", right: "0",
+    height: "100vh", width: "500px",
+    background: "white", color: "#111",
+    boxShadow: "-4px 0 10px rgba(0,0,0,0.2)",
+    transform: "translateX(500px)",
+    transition: "transform 0.3s ease",
+    zIndex: "999998"
+  });
 
-    panel.style.position = "fixed";
-    panel.style.top = "0";
-    panel.style.right = "0";
-    panel.style.height = "100vh";
-    panel.style.width = "500px";
-    panel.style.background = "white";
-    panel.style.color = "#111";
-    panel.style.boxShadow = "-4px 0 10px rgba(0,0,0,0.2)";
-    panel.style.transform = "translateX(500px)"; // fully hidden
-    panel.style.transition = "transform 0.3s ease";
-    panel.style.zIndex = "999998";
+  // ── ARROW ────────────────────────────────────────────────────────────────────
+  const arrow = document.createElement("div");
+  arrow.id = "sidekick-arrow";
+  Object.assign(arrow.style, {
+    position: "fixed", top: "50%", right: "0",
+    transform: "translateY(-50%)",
+    width: "20px", height: "60px",
+    background: "black", color: "white",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    cursor: "pointer", zIndex: "999999"
+  });
+  arrow.innerHTML = "◀";
 
-    // ARROW
-    const arrow = document.createElement("div");
-    arrow.id = "sidekick-arrow";
+  let isOpen = false;
 
-    arrow.style.position = "fixed";
-    arrow.style.top = "50%";
+  function openPanel() {
+    isOpen = true;
+    panel.style.transform = "translateX(0)";
+    arrow.style.transition = "right 0.3s ease";
+    arrow.style.right = "500px";
+    arrow.innerHTML = "▶";
+  }
+  function closePanel() {
+    isOpen = false;
+    panel.style.transform = "translateX(500px)";
     arrow.style.right = "0";
-    arrow.style.transform = "translateY(-50%)";
-    arrow.style.width = "20px";
-    arrow.style.height = "60px";
-    arrow.style.background = "black";
-    arrow.style.color = "white";
-    arrow.style.display = "flex";
-    arrow.style.alignItems = "center";
-    arrow.style.justifyContent = "center";
-    arrow.style.cursor = "pointer";
-    arrow.style.zIndex = "999999";
-
     arrow.innerHTML = "◀";
+  }
+  arrow.addEventListener("click", () => isOpen ? closePanel() : openPanel());
 
-    let isOpen = false;
+  // ── BUTTON ROW ───────────────────────────────────────────────────────────────
+  const buttonRow = document.createElement("div");
+  Object.assign(buttonRow.style, { display: "flex", gap: "10px", padding: "20px" });
 
-    function openPanel() {
-      isOpen = true;
-      panel.style.transform = "translateX(0)";
-      arrow.style.transition = "right 0.3s ease";
-      arrow.style.right = "500px";
-      arrow.innerHTML = "▶";
-    }
+  const captureBtn = document.createElement("button");
+  captureBtn.innerText = "Capture";
+  Object.assign(captureBtn.style, {
+    padding: "10px 20px", cursor: "pointer", fontSize: "16px", color: "black"
+  });
 
-    function closePanel() {
-      isOpen = false;
-      panel.style.transform = "translateX(500px)";
-      arrow.style.right = "0";
-      arrow.innerHTML = "◀";
-    }
+  const clearBtn = document.createElement("button");
+  clearBtn.innerText = "Clear All";
+  Object.assign(clearBtn.style, {
+    padding: "10px 20px", cursor: "pointer", fontSize: "16px",
+    color: "white", background: "#c0392b", border: "none", borderRadius: "4px"
+  });
+  clearBtn.addEventListener("click", () => {
+    sessionStorage.removeItem("capturedItems");
+    undoStack = [];
+    renderCapturedList([]);
+  });
 
-    arrow.addEventListener("click", () => {
-      if (isOpen) closePanel();
-      else openPanel();
+  buttonRow.appendChild(captureBtn);
+  buttonRow.appendChild(clearBtn);
+  panel.appendChild(buttonRow);
+
+  // ── CAPTURED LIST ────────────────────────────────────────────────────────────
+  const capturedList = document.createElement("div");
+  capturedList.id = "sidekick-captured-list";
+  Object.assign(capturedList.style, {
+    padding: "0 20px 20px", overflowY: "auto",
+    maxHeight: "calc(100vh - 80px)", color: "#111"
+  });
+  panel.appendChild(capturedList);
+
+  document.body.appendChild(panel);
+  document.body.appendChild(arrow);
+
+  // ── CAPTURE BAR ──────────────────────────────────────────────────────────────
+  // States: "armed" | "captured" | "undone"
+  const captureBar = document.createElement("div");
+  captureBar.id = "sidekick-capture-bar";
+  Object.assign(captureBar.style, {
+    position: "fixed", bottom: "0", left: "0", right: "0",
+    height: "56px",
+    background: "#1a1a2e",
+    color: "white",
+    display: "none",          // hidden until capture mode
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "0 20px",
+    zIndex: "9999999",
+    fontFamily: "system-ui, sans-serif",
+    fontSize: "14px",
+    boxShadow: "0 -2px 12px rgba(0,0,0,0.3)"
+  });
+  document.body.appendChild(captureBar);
+
+  function barBtn(label, bg) {
+    const b = document.createElement("button");
+    b.innerText = label;
+    Object.assign(b.style, {
+      padding: "6px 14px", cursor: "pointer", fontSize: "13px",
+      background: bg || "#333", color: "white",
+      border: "1px solid rgba(255,255,255,0.2)", borderRadius: "4px",
+      marginLeft: "8px"
+    });
+    return b;
+  }
+
+  function showBarArmed() {
+    captureBar.style.display = "flex";
+    captureBar.innerHTML = "";
+
+    const left = document.createElement("div");
+    left.style.display = "flex";
+    left.style.alignItems = "center";
+    left.style.gap = "10px";
+
+    const dot = document.createElement("span");
+    dot.textContent = "🎯";
+
+    const msg = document.createElement("span");
+    msg.style.color = "#aaa";
+    msg.textContent = "Capture mode — click an element or select text";
+
+    left.appendChild(dot);
+    left.appendChild(msg);
+
+    const right = document.createElement("div");
+    right.style.display = "flex";
+    right.style.alignItems = "center";
+
+    const kbHint = document.createElement("span");
+    kbHint.style.color = "#666";
+    kbHint.style.fontSize = "12px";
+    kbHint.textContent = "Esc to cancel";
+
+    const cancelBtn = barBtn("✕ Cancel", "#444");
+    cancelBtn.addEventListener("click", () => {
+      disableCaptureMode();
+      hideBar();
     });
 
-    // BUTTON ROW
-    const buttonRow = document.createElement("div");
-    buttonRow.style.display = "flex";
-    buttonRow.style.gap = "10px";
-    buttonRow.style.padding = "20px";
+    right.appendChild(kbHint);
+    right.appendChild(cancelBtn);
+    captureBar.appendChild(left);
+    captureBar.appendChild(right);
+  }
 
-    // CAPTURE BUTTON
-    const captureBtn = document.createElement("button");
-    captureBtn.innerText = "Capture";
-    captureBtn.style.padding = "10px 20px";
-    captureBtn.style.cursor = "pointer";
-    captureBtn.style.fontSize = "16px";
-    captureBtn.style.color = "black";
+  function showBarCaptured(item) {
+    captureBar.style.display = "flex";
+    captureBar.innerHTML = "";
 
-    captureBtn.addEventListener("click", () => {
-      const selectedText = window.getSelection().toString().trim() || lastSelectedText;
-      if (selectedText.length > 0) {
-        saveCapturedData({
-          type: "text",
-          content: selectedText
-        });
-        lastSelectedText = "";
-        return;
-      }
-      closePanel(); // ← auto-close so the page is fully visible
+    const left = document.createElement("div");
+    left.style.display = "flex";
+    left.style.alignItems = "center";
+    left.style.gap = "10px";
+
+    // Modality-aware preview
+    const typeTag = document.createElement("span");
+    typeTag.style.cssText = `
+      background: #2ecc71; color: #000; font-weight: 700;
+      font-size: 11px; padding: 2px 7px; border-radius: 3px; text-transform: uppercase;
+    `;
+    typeTag.textContent = item.type;
+
+    const preview = document.createElement("span");
+    preview.style.color = "#ddd";
+    preview.style.maxWidth = "400px";
+    preview.style.overflow = "hidden";
+    preview.style.textOverflow = "ellipsis";
+    preview.style.whiteSpace = "nowrap";
+
+    if (item.type === "image") {
+      const thumb = document.createElement("img");
+      thumb.src = item.content;
+      Object.assign(thumb.style, {
+        height: "32px", width: "32px", objectFit: "cover",
+        borderRadius: "3px", verticalAlign: "middle", marginRight: "6px"
+      });
+      preview.appendChild(thumb);
+      const urlSpan = document.createElement("span");
+      urlSpan.textContent = item.content.split("/").pop().slice(0, 40) || item.content.slice(0, 40);
+      preview.appendChild(urlSpan);
+    } else if (item.type === "video") {
+      preview.textContent = "🎬 " + (item.content.split("/").pop().slice(0, 60) || item.content.slice(0, 60));
+    } else if (item.type === "iframe") {
+      preview.textContent = "🖼 " + item.content.slice(0, 60);
+    } else {
+      preview.textContent = item.content.slice(0, 80) + (item.content.length > 80 ? "…" : "");
+    }
+
+    left.appendChild(typeTag);
+    left.appendChild(preview);
+
+    const right = document.createElement("div");
+    right.style.display = "flex";
+    right.style.alignItems = "center";
+
+    const undoBtn = barBtn("↩ Undo", "#555");
+    undoBtn.addEventListener("click", () => {
+      undoLastCapture();
+      showBarUndone();
+    });
+
+    const moreBtn = barBtn("＋ Capture More", "#2980b9");
+    moreBtn.addEventListener("click", () => {
+      showBarArmed();
       enableCaptureMode();
     });
 
-    // CLEAR BUTTON
-    const clearBtn = document.createElement("button");
-    clearBtn.innerText = "Clear";
-    clearBtn.style.padding = "10px 20px";
-    clearBtn.style.cursor = "pointer";
-    clearBtn.style.fontSize = "16px";
-    clearBtn.style.color = "white";
-    clearBtn.style.background = "#c0392b";
-    clearBtn.style.border = "none";
-    clearBtn.style.borderRadius = "4px";
+    const doneBtn = barBtn("✓ Done", "#27ae60");
+    doneBtn.addEventListener("click", () => hideBar());
 
-    clearBtn.addEventListener("click", () => {
-      sessionStorage.removeItem("capturedItems");
-      renderCapturedList([]);
+    right.appendChild(undoBtn);
+    right.appendChild(moreBtn);
+    right.appendChild(doneBtn);
+    captureBar.appendChild(left);
+    captureBar.appendChild(right);
+  }
+
+  function showBarUndone() {
+    captureBar.style.display = "flex";
+    captureBar.innerHTML = "";
+
+    const left = document.createElement("div");
+    left.style.display = "flex";
+    left.style.alignItems = "center";
+    left.style.gap = "10px";
+
+    const msg = document.createElement("span");
+    msg.style.color = "#e0c97f";
+    msg.textContent = "↩ Capture undone";
+    left.appendChild(msg);
+
+    const right = document.createElement("div");
+    right.style.display = "flex";
+    right.style.alignItems = "center";
+
+    const redoBtn = barBtn("⟳ Redo", "#8e44ad");
+    redoBtn.addEventListener("click", () => {
+      const item = redoLastCapture();
+      if (item) showBarCaptured(item);
     });
 
-    buttonRow.appendChild(captureBtn);
-    buttonRow.appendChild(clearBtn);
-    panel.appendChild(buttonRow);
+    const captureAgainBtn = barBtn("＋ Capture Again", "#2980b9");
+    captureAgainBtn.addEventListener("click", () => {
+      showBarArmed();
+      enableCaptureMode();
+    });
 
-  // CAPTURED LIST
-  const capturedList = document.createElement("div");
-  capturedList.id = "sidekick-captured-list";
-  capturedList.style.padding = "0 20px 20px";
-  capturedList.style.overflowY = "auto";
-  capturedList.style.maxHeight = "calc(100vh - 80px)";
-  capturedList.style.color = "#111";
-  panel.appendChild(capturedList);
+    const cancelBtn = barBtn("✕ Cancel", "#444");
+    cancelBtn.addEventListener("click", () => hideBar());
 
-    document.body.appendChild(panel);
-    document.body.appendChild(arrow);
+    right.appendChild(redoBtn);
+    right.appendChild(captureAgainBtn);
+    right.appendChild(cancelBtn);
+    captureBar.appendChild(left);
+    captureBar.appendChild(right);
+  }
 
-function enableCaptureMode() {
-  if (captureArmed) return;
-  captureArmed = true;
-  document.body.style.cursor = "crosshair";
-  captureStyleEl = document.createElement("style");
-  captureStyleEl.id = "sidekick-capture-style";
-  captureStyleEl.textContent = "* { cursor: crosshair !important; }";
-  document.head.appendChild(captureStyleEl);
-  captureOverlay = document.createElement("div");
-  captureOverlay.id = "capture-overlay";
-  Object.assign(captureOverlay.style, {
-    position: "fixed",
-    top: "0",
-    left: "0",
-    width: "100vw",
-    height: "100vh",
-    background: "rgba(0,0,0,0.05)",
-    pointerEvents: "none",
-    zIndex: "999999"
+  function hideBar() {
+    captureBar.style.display = "none";
+    captureBar.innerHTML = "";
+  }
+
+  // ── CAPTURE MODE ─────────────────────────────────────────────────────────────
+  captureBtn.addEventListener("click", () => {
+    const selectedText = window.getSelection().toString().trim() || lastSelectedText;
+    if (selectedText.length > 0) {
+      const item = saveCapturedData({ type: "text", content: selectedText });
+      lastSelectedText = "";
+      showBarCaptured(item);
+      closePanel();
+      return;
+    }
+    closePanel();
+    showBarArmed();
+    enableCaptureMode();
   });
-  document.body.appendChild(captureOverlay);
-  document.addEventListener("mouseup", onCaptureMouseUp, true);
-  document.addEventListener("click", onCaptureClick, true);
-  document.addEventListener("mouseover", onCaptureHover, true);
-  document.addEventListener("mousemove", onCaptureHover, true);
-  document.addEventListener("keydown", onCaptureKeyDown, true); // ← Escape listener
-}
 
-function disableCaptureMode() {
-  if (!captureArmed) return;
-  captureArmed = false;
-  document.body.style.cursor = "";
-  if (captureStyleEl) {
-    captureStyleEl.remove();
-    captureStyleEl = null;
-  }
-  if (captureOverlay) {
-    captureOverlay.remove();
-    captureOverlay = null;
-  }
-  document.removeEventListener("mouseup", onCaptureMouseUp, true);
-  document.removeEventListener("click", onCaptureClick, true);
-  document.removeEventListener("mouseover", onCaptureHover, true);
-  document.removeEventListener("mousemove", onCaptureHover, true);
-  document.removeEventListener("keydown", onCaptureKeyDown, true); // ← cleanup
-}
-
-// ESCAPE KEY handler
-function onCaptureKeyDown(e) {
-  if (e.key === "Escape") {
-    disableCaptureMode();
-  }
-}
-
-function isSelectionInsidePanel() {
-  const sel = window.getSelection();
-  if (!sel || sel.rangeCount === 0) return false;
-  const node = sel.getRangeAt(0).commonAncestorContainer;
-  const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
-  return !!(element && panel.contains(element));
-}
-
-function onCaptureMouseUp() {
-  if (!captureArmed) return;
-  const selectedText = window.getSelection().toString().trim() || lastSelectedText;
-  if (selectedText.length > 0 && !isSelectionInsidePanel()) {
-    saveCapturedData({
-      type: "text",
-      content: selectedText
+  function enableCaptureMode() {
+    if (captureArmed) return;
+    captureArmed = true;
+    captureStyleEl = document.createElement("style");
+    captureStyleEl.textContent = "* { cursor: crosshair !important; }";
+    document.head.appendChild(captureStyleEl);
+    captureOverlay = document.createElement("div");
+    Object.assign(captureOverlay.style, {
+      position: "fixed", top: "0", left: "0",
+      width: "100vw", height: "100vh",
+      background: "rgba(0,0,0,0.04)",
+      pointerEvents: "none", zIndex: "999997"  // below bar
     });
-    lastSelectedText = "";
-    disableCaptureMode();
+    document.body.appendChild(captureOverlay);
+    document.addEventListener("mouseup", onCaptureMouseUp, true);
+    document.addEventListener("click", onCaptureClick, true);
+    document.addEventListener("mouseover", onCaptureHover, true);
+    document.addEventListener("mousemove", onCaptureHover, true);
+    document.addEventListener("keydown", onCaptureKeyDown, true);
   }
-}
 
-function onCaptureClick(e) {
-  if (!captureArmed) return;
-  e.preventDefault();
-  e.stopPropagation();
-  if (panel.contains(e.target) || arrow.contains(e.target)) return;
-  const path = typeof e.composedPath === "function" ? e.composedPath() : [];
-  let element = e.target;
-  for (const node of path) {
-    if (node && node.tagName === "VIDEO") {
-      element = node;
-      break;
-    }
-    if (node && node.tagName === "IMG") {
-      element = node;
-      break;
-    }
-    if (node && node.tagName === "IFRAME") {
-      element = node;
-      break;
-    }
+  function disableCaptureMode() {
+    if (!captureArmed) return;
+    captureArmed = false;
+    document.body.style.cursor = "";
+    if (captureStyleEl) { captureStyleEl.remove(); captureStyleEl = null; }
+    if (captureOverlay) { captureOverlay.remove(); captureOverlay = null; }
+    document.removeEventListener("mouseup", onCaptureMouseUp, true);
+    document.removeEventListener("click", onCaptureClick, true);
+    document.removeEventListener("mouseover", onCaptureHover, true);
+    document.removeEventListener("mousemove", onCaptureHover, true);
+    document.removeEventListener("keydown", onCaptureKeyDown, true);
   }
-  if (element && element.closest) {
-    const video = element.closest("video");
-    const img = element.closest("img");
-    if (video) element = video;
-    else if (img) element = img;
-  }
-  if (element && (element.tagName === "IMG" || element.tagName === "VIDEO" || element.tagName === "IFRAME")) {
-    handleCapturedElement(element);
-    disableCaptureMode();
-  }
-}
 
-function onCaptureHover(e) {
-  if (!captureArmed) return;
-  const element = e.target;
-  if (element && element.tagName === "VIDEO") {
+  function onCaptureKeyDown(e) {
+    if (e.key === "Escape") {
+      disableCaptureMode();
+      hideBar();
+    }
+  }
+
+  function isSelectionInsidePanel() {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return false;
+    const node = sel.getRangeAt(0).commonAncestorContainer;
+    const el = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+    return !!(el && panel.contains(el));
+  }
+
+  function onCaptureMouseUp() {
+    if (!captureArmed) return;
+    const selectedText = window.getSelection().toString().trim() || lastSelectedText;
+    if (selectedText.length > 0 && !isSelectionInsidePanel()) {
+      const item = saveCapturedData({ type: "text", content: selectedText });
+      lastSelectedText = "";
+      disableCaptureMode();
+      showBarCaptured(item);
+    }
+  }
+
+  function onCaptureClick(e) {
+    if (!captureArmed) return;
+    // Allow clicks inside the capture bar itself
+    if (captureBar.contains(e.target)) return;
     e.preventDefault();
-    e.stopImmediatePropagation();
-  }
-}
+    e.stopPropagation();
+    if (panel.contains(e.target) || arrow.contains(e.target)) return;
 
-	function handleCapturedElement(element) {
-	  if (!element) return;
-
-  if (element.tagName === "IMG") {
-    console.log("Captured image:", element.src);
-    saveCapturedData({
-      type: "image",
-      content: element.src
-    });
-    return;
-  }
-
-	  if (element.tagName === "VIDEO") {
-	    console.log("Captured video:", element.currentSrc);
-	    saveCapturedData({
-	      type: "video",
-	      content: element.currentSrc
-	    });
-	    return;
-	  }
-
-  if (element.tagName === "IFRAME") {
-    console.log("Captured iframe:", element.src);
-    saveCapturedData({
-      type: "iframe",
-      content: element.src
-    });
-    return;
+    const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+    let element = e.target;
+    for (const node of path) {
+      if (node.tagName === "VIDEO" || node.tagName === "IMG" || node.tagName === "IFRAME") {
+        element = node; break;
+      }
+    }
+    if (element && element.closest) {
+      const video = element.closest("video");
+      const img = element.closest("img");
+      if (video) element = video;
+      else if (img) element = img;
+    }
+    if (element && (element.tagName === "IMG" || element.tagName === "VIDEO" || element.tagName === "IFRAME")) {
+      const item = handleCapturedElement(element);
+      disableCaptureMode();
+      if (item) showBarCaptured(item);
+    }
   }
 
-  const selectedText = window.getSelection().toString().trim() || lastSelectedText;
-  if (selectedText.length > 0) {
-    console.log("Captured text:", selectedText);
-    saveCapturedData({
-      type: "text",
-      content: selectedText
-    });
-    lastSelectedText = "";
-    return;
+  function onCaptureHover(e) {
+    if (!captureArmed) return;
+    if (e.target && e.target.tagName === "VIDEO") {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
   }
 
-  console.log("Nothing capturable detected.");
-}
+  function handleCapturedElement(element) {
+    if (!element) return null;
+    if (element.tagName === "IMG")
+      return saveCapturedData({ type: "image", content: element.src });
+    if (element.tagName === "VIDEO")
+      return saveCapturedData({ type: "video", content: element.currentSrc });
+    if (element.tagName === "IFRAME")
+      return saveCapturedData({ type: "iframe", content: element.src });
+    const selectedText = window.getSelection().toString().trim() || lastSelectedText;
+    if (selectedText.length > 0) {
+      lastSelectedText = "";
+      return saveCapturedData({ type: "text", content: selectedText });
+    }
+    return null;
+  }
 
-	function saveCapturedData(data) {
-	  const enriched = {
-	    ...data,
-	    sourceUrl: location.href,
-	    capturedAt: new Date().toISOString()
-	  };
-	  let stored = JSON.parse(sessionStorage.getItem("capturedItems") || "[]");
-	  stored.push(enriched);
-	  sessionStorage.setItem("capturedItems", JSON.stringify(stored));
-	  renderCapturedList(stored);
-	  console.log("Saved:", enriched);
-	}
+  // ── STORAGE + UNDO/REDO ──────────────────────────────────────────────────────
+  function saveCapturedData(data) {
+    const enriched = { ...data, sourceUrl: location.href, capturedAt: new Date().toISOString() };
+    const stored = JSON.parse(sessionStorage.getItem("capturedItems") || "[]");
+    stored.push(enriched);
+    sessionStorage.setItem("capturedItems", JSON.stringify(stored));
+    undoStack = []; // new capture clears redo stack
+    renderCapturedList(stored);
+    return enriched;
+  }
 
+  function undoLastCapture() {
+    const stored = JSON.parse(sessionStorage.getItem("capturedItems") || "[]");
+    if (!stored.length) return;
+    const removed = stored.pop();
+    undoStack.push(removed);
+    sessionStorage.setItem("capturedItems", JSON.stringify(stored));
+    renderCapturedList(stored);
+  }
+
+  function redoLastCapture() {
+    if (!undoStack.length) return null;
+    const item = undoStack.pop();
+    const stored = JSON.parse(sessionStorage.getItem("capturedItems") || "[]");
+    stored.push(item);
+    sessionStorage.setItem("capturedItems", JSON.stringify(stored));
+    renderCapturedList(stored);
+    return item;
+  }
+
+  // ── RENDER LIST ──────────────────────────────────────────────────────────────
   function renderCapturedList(items) {
     capturedList.innerHTML = "";
     if (!items.length) {
@@ -316,49 +454,37 @@ function onCaptureHover(e) {
     }
     for (const item of items.slice().reverse()) {
       const row = document.createElement("div");
-      row.style.borderBottom = "1px solid #eee";
-      row.style.padding = "10px 0";
+      row.style.cssText = "border-bottom: 1px solid #eee; padding: 10px 0;";
 
       const title = document.createElement("div");
       title.innerText = item.type.toUpperCase();
-      title.style.fontWeight = "600";
-      title.style.marginBottom = "6px";
+      title.style.cssText = "font-weight: 600; margin-bottom: 6px;";
 
       const content = document.createElement("div");
-      content.style.marginBottom = "6px";
-      content.style.color = "#111";
+      content.style.cssText = "margin-bottom: 6px; color: #111;";
+
       if (item.type === "image") {
         const img = document.createElement("img");
         img.src = item.content;
-        img.style.maxWidth = "100%";
-        img.style.maxHeight = "150px";
-        img.style.display = "block";
+        img.style.cssText = "max-width: 100%; max-height: 150px; display: block;";
         content.appendChild(img);
       } else {
         const text = document.createElement("div");
         text.innerText = item.content || "";
-        text.style.wordBreak = "break-word";
-        text.style.fontSize = "12px";
-        text.style.color = "#111";
+        text.style.cssText = "word-break: break-word; font-size: 12px; color: #111;";
         content.appendChild(text);
       }
 
       const source = document.createElement("div");
-      source.style.fontSize = "11px";
-      source.style.color = "#555";
-      source.style.wordBreak = "break-word";
-
+      source.style.cssText = "font-size: 11px; color: #555; word-break: break-word;";
       const sourceLabel = document.createElement("span");
       sourceLabel.innerText = "Source: ";
-
       const sourceLink = document.createElement("a");
       sourceLink.href = item.sourceUrl;
       sourceLink.innerText = item.sourceUrl;
       sourceLink.target = "_blank";
       sourceLink.rel = "noopener noreferrer";
-      sourceLink.style.color = "#1a0dab";
-      sourceLink.style.textDecoration = "underline";
-
+      sourceLink.style.cssText = "color: #1a0dab; text-decoration: underline;";
       source.appendChild(sourceLabel);
       source.appendChild(sourceLink);
 
@@ -371,5 +497,4 @@ function onCaptureHover(e) {
 
   const initialItems = JSON.parse(sessionStorage.getItem("capturedItems") || "[]");
   renderCapturedList(initialItems);
-
 }
