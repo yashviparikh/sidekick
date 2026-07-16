@@ -14,7 +14,10 @@
   "https://web.whatsapp.com/*",
   "https://www.youtube.com/*",
   "https://mail.google.com/*",
-  "https://www.w3schools.com/*"
+  "https://www.w3schools.com/*",
+  "https://www.reddit.com/*",
+  "https://www.linkedin.com/*",
+  "https://en.wikipedia.org/wiki/*"
 ]
 ,
             "js": ["content-worker.js"]

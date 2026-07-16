@@ -1,5 +1,3 @@
-console.log("Sidekick content script loaded");
-
 if (!document.getElementById("sidekick-panel")) {
 
   const STORAGE_KEY = "sidekick_data";
@@ -95,55 +93,91 @@ if (!document.getElementById("sidekick-panel")) {
     if (t) lastSelectedText = t;
   });
 
+  // ── PALETTE ──────────────────────────────────────────────────────────────
+  // olive:        #5a6132  (dark)   #484f28  (darker)   #3d5228  (arrow)
+  // butter:       #f5f0c0  (bg wash)  #ede8a8  (hover)
+  // light green:  #d1ffbd  (active/highlight)  #edf5d0  (header tint)
+  // text dark:    #2e2e1f
+  // border:       #c8cda8  (normal)  #8a8c6a  (hover)
+  // ─────────────────────────────────────────────────────────────────────────
+
   const styleEl = document.createElement("style");
   styleEl.id = "sidekick-styles";
   styleEl.textContent = `
     #sidekick-panel, #sidekick-panel * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; margin: 0; }
-    #sidekick-panel { scrollbar-width: thin; scrollbar-color: #d1d5db transparent; }
+    #sidekick-panel { scrollbar-width: thin; scrollbar-color: #8fbd6a transparent; }
     #sidekick-body::-webkit-scrollbar { width: 6px; }
     #sidekick-body::-webkit-scrollbar-track { background: transparent; }
-    #sidekick-body::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
-    .sk-btn { padding: 6px 13px; cursor: pointer; font-size: 13px; border-radius: 6px; border: 1px solid #e2e8f0; background: #f8fafc; color: #1e293b; transition: all 0.12s; white-space: nowrap; line-height: 1.4; }
-    .sk-btn:hover { background: #f1f5f9; border-color: #cbd5e1; }
-    .sk-btn.primary { background: #2563eb; color: white; border-color: #2563eb; }
-    .sk-btn.primary:hover { background: #1d4ed8; border-color: #1d4ed8; }
-    .sk-btn.danger { color: #dc2626; border-color: #fca5a5; background: #fff; }
-    .sk-btn.danger:hover { background: #fef2f2; }
+    #sidekick-body::-webkit-scrollbar-thumb { background: #8fbd6a; border-radius: 3px; }
+
+    .sk-btn { padding: 6px 13px; cursor: pointer; font-size: 13px; border-radius: 6px; border: 1px solid #c8cda8; background: #f5f0c0; color: #2e2e1f; transition: all 0.12s; white-space: nowrap; line-height: 1.4; }
+    .sk-btn:hover { background: #ede8a8; border-color: #8a8c6a; }
+    .sk-btn.primary { background: #5a6132; color: #f7f5e8; border-color: #5a6132; }
+    .sk-btn.primary:hover { background: #484f28; border-color: #484f28; }
+    .sk-btn.danger { color: #8b2e2e; border-color: #d4a5a5; background: #fdf6f6; }
+    .sk-btn.danger:hover { background: #f9eded; }
+
     .sk-icon-btn { width: 28px; height: 28px; border-radius: 6px; border: none; background: transparent; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-size: 15px; transition: background 0.12s; flex-shrink: 0; padding: 0; }
-    .sk-icon-btn:hover { background: #f1f5f9; }
-    .sk-note-card { border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; background: #fff; position: relative; transition: border-color 0.12s; }
-    .sk-note-card:hover { border-color: #94a3b8; }
+    .sk-icon-btn:hover { background: #ede8a8; }
+
+    .sk-note-card { border: 1px solid #c8cda8; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; background: #fafff5; position: relative; transition: border-color 0.12s, background 0.12s; }
+    .sk-note-card:hover { border-color: #8a8c6a; }
     .sk-note-card:hover .sk-note-del { opacity: 1; }
-    .sk-note-del { position: absolute; top: 7px; right: 7px; opacity: 0; transition: opacity 0.12s; width: 22px; height: 22px; border-radius: 4px; border: none; background: transparent; cursor: pointer; font-size: 12px; color: #94a3b8; display: inline-flex; align-items: center; justify-content: center; }
-    .sk-note-del:hover { background: #fee2e2; color: #dc2626; }
-    .sk-nb-card { border: 1px solid #e2e8f0; border-radius: 8px; padding: 11px 13px; margin-bottom: 8px; background: #fff; cursor: pointer; transition: border-color 0.12s, box-shadow 0.12s; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-    .sk-nb-card:hover { border-color: #93c5fd; box-shadow: 0 0 0 3px rgba(37,99,235,0.08); }
-    .sk-nb-card.active { border-color: #2563eb; background: #eff6ff; }
+    .sk-note-card:hover .sk-note-menu-btn { opacity: 1; }
+    .sk-note-card.pinned { border-color: #8fbd6a; background: #f7ffe9; }
+    .sk-note-del { position: absolute; top: 7px; right: 7px; opacity: 0; transition: opacity 0.12s; width: 22px; height: 22px; border-radius: 4px; border: none; background: transparent; cursor: pointer; font-size: 12px; color: #8a8c6a; display: inline-flex; align-items: center; justify-content: center; }
+    .sk-note-del:hover { background: #f4dada; color: #8b2e2e; }
+
+    .sk-note-menu-wrap { position: absolute; top: 7px; right: 33px; }
+    .sk-note-menu-btn { opacity: 0; transition: opacity 0.12s; width: 22px; height: 22px; border-radius: 4px; border: none; background: transparent; cursor: pointer; font-size: 15px; line-height: 1; color: #8a8c6a; display: inline-flex; align-items: center; justify-content: center; }
+    .sk-note-menu-btn:hover { background: #ede8a8; color: #2e2e1f; }
+    .sk-note-menu-btn.open { opacity: 1; background: #ede8a8; color: #2e2e1f; }
+
+    .sk-pin-badge { display: inline-flex; align-items: center; margin-right: 2px; color: #5a6132; }
+    .sk-pin-badge svg { width: 13px; height: 13px; display: block; }
+
+    .sk-read-more { font-size: 12px; color: #5a6132; cursor: pointer; font-weight: 600; margin-top: 4px; display: inline-block; }
+    .sk-read-more:hover { text-decoration: underline; }
+
+    .sk-nb-card { border: 1px solid #c8cda8; border-radius: 8px; padding: 11px 13px; margin-bottom: 8px; background: #fafff5; cursor: pointer; transition: border-color 0.12s, box-shadow 0.12s; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .sk-nb-card:hover { border-color: #8a8c6a; box-shadow: 0 0 0 3px rgba(209,255,189,0.45); }
+    .sk-nb-card.active { border-color: #5a6132; background: #d1ffbd; }
+
     .sk-tag { display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 3px; text-transform: uppercase; letter-spacing: 0.4px; }
-    .sk-tag.text  { background: #dbeafe; color: #1d4ed8; }
+    .sk-tag.text  { background: #e8f5d0; color: #2e3d0a; }
     .sk-tag.image { background: #d1fae5; color: #065f46; }
     .sk-tag.video { background: #fce7f3; color: #9d174d; }
-    .sk-tag.iframe{ background: #fef3c7; color: #92400e; }
-    .sk-input { border: 1px solid #e2e8f0; border-radius: 6px; padding: 6px 10px; font-size: 13px; width: 100%; outline: none; background: white; }
-    .sk-input:focus { border-color: #2563eb; box-shadow: 0 0 0 2px rgba(37,99,235,0.12); }
-    .sk-section-lbl { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.7px; color: #94a3b8; margin-bottom: 8px; display: block; }
-    .sk-empty { color: #94a3b8; font-size: 13px; text-align: center; padding: 40px 16px; line-height: 1.6; }
-    .sk-bin-card { border: 1px solid #fecaca; border-radius: 8px; padding: 11px 13px; margin-bottom: 8px; background: #fff5f5; }
-    .sk-bin-meta { font-size: 11px; color: #ef4444; margin-top: 3px; }
-    .sk-dropdown { position: absolute; top: calc(100% + 4px); right: 0; background: white; border: 1px solid #e2e8f0; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.1); z-index: 10000; min-width: 150px; overflow: hidden; }
-    .sk-dd-item { padding: 9px 14px; cursor: pointer; font-size: 13px; color: #1e293b; display: flex; align-items: center; gap: 8px; }
-    .sk-dd-item:hover { background: #f1f5f9; }
+    .sk-tag.iframe{ background: #f5f0c0; color: #5c4a0a; }
+
+    .sk-input { border: 1px solid #c8cda8; border-radius: 6px; padding: 6px 10px; font-size: 13px; width: 100%; outline: none; background: #fafff5; color: #2e2e1f; }
+    .sk-input:focus { border-color: #5a6132; box-shadow: 0 0 0 2px rgba(209,255,189,0.5); }
+
+    .sk-section-lbl { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.7px; color: #8a8c6a; margin-bottom: 8px; display: block; }
+    .sk-empty { color: #8a8c6a; font-size: 13px; text-align: center; padding: 40px 16px; line-height: 1.6; }
+
+    .sk-bin-card { border: 1px solid #d4b8a5; border-radius: 8px; padding: 11px 13px; margin-bottom: 8px; background: #fdf6f0; }
+    .sk-bin-meta { font-size: 11px; color: #8b4a2e; margin-top: 3px; }
+
+    .sk-dropdown { position: absolute; top: calc(100% + 4px); right: 0; background: #fafff5; border: 1px solid #c8cda8; border-radius: 8px; box-shadow: 0 4px 16px rgba(46,46,31,0.12); z-index: 10000; min-width: 150px; overflow: hidden; }
+    .sk-dd-item { padding: 9px 14px; cursor: pointer; font-size: 13px; color: #2e2e1f; display: flex; align-items: center; gap: 8px; }
+    .sk-dd-item:hover { background: #ede8a8; }
+    .sk-dd-item.disabled { color: #b5b89a; cursor: default; }
+    .sk-dd-item.disabled:hover { background: transparent; }
+
     .sk-resize-h { position: absolute; left: 0; top: 0; width: 5px; height: 100%; cursor: ew-resize; z-index: 10; background: transparent; }
-    .sk-resize-h:hover, .sk-resize-h.dragging { background: rgba(37,99,235,0.25); }
+    .sk-resize-h:hover, .sk-resize-h.dragging { background: rgba(90,97,50,0.3); }
     .sk-resize-v { position: absolute; left: 0; bottom: 0; width: 100%; height: 5px; cursor: ns-resize; z-index: 10; background: transparent; }
-    .sk-resize-v:hover, .sk-resize-v.dragging { background: rgba(37,99,235,0.25); }
-    .sk-header { padding: 13px 14px 10px; border-bottom: 1px solid #e2e8f0; background: white; flex-shrink: 0; }
+    .sk-resize-v:hover, .sk-resize-v.dragging { background: rgba(90,97,50,0.3); }
+
+    .sk-header { padding: 13px 14px 10px; border-bottom: 1px solid #c8cda8; background: #edf5d0; flex-shrink: 0; }
     .sk-header-row { display: flex; align-items: center; gap: 6px; margin-bottom: 9px; }
     .sk-action-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-    .sk-nb-name { font-size: 15px; font-weight: 700; color: #0f172a; flex: 1; min-width: 0; cursor: pointer; padding: 3px 5px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .sk-nb-name:hover { background: #f1f5f9; }
-    .sk-view-title { font-size: 15px; font-weight: 700; color: #0f172a; flex: 1; }
-    .sk-sync-dot { width: 6px; height: 6px; border-radius: 50%; background: #10b981; display: inline-block; margin-left: 4px; opacity: 0; transition: opacity 0.3s; }
+
+    .sk-nb-name { font-size: 15px; font-weight: 700; color: #2e2e1f; flex: 1; min-width: 0; cursor: pointer; padding: 3px 5px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sk-nb-name:hover { background: #ede8a8; }
+    .sk-view-title { font-size: 15px; font-weight: 700; color: #2e2e1f; flex: 1; }
+
+    .sk-sync-dot { width: 6px; height: 6px; border-radius: 50%; background: #5a6132; display: inline-block; margin-left: 4px; opacity: 0; transition: opacity 0.3s; }
     .sk-sync-dot.active { opacity: 1; }
   `;
   document.head.appendChild(styleEl);
@@ -153,8 +187,8 @@ if (!document.getElementById("sidekick-panel")) {
   Object.assign(panel.style, {
     position: "fixed", top: "0", right: "0",
     height: "100vh", width: panelW + "px",
-    background: "#f8fafc", color: "#0f172a",
-    boxShadow: "-4px 0 24px rgba(0,0,0,0.1)",
+    background: "#f5f0c0", color: "#2e2e1f",
+    boxShadow: "-4px 0 24px rgba(46,46,31,0.12)",
     transform: `translateX(${panelW}px)`,
     transition: "transform 0.25s ease",
     zIndex: "999998",
@@ -190,13 +224,13 @@ if (!document.getElementById("sidekick-panel")) {
     position: "fixed", top: "50%", right: "0",
     transform: "translateY(-50%)",
     width: "20px", height: "60px",
-    background: "#1e293b", color: "white",
+    background: "#3d5228", color: "#d1ffbd",
     display: "flex", alignItems: "center", justifyContent: "center",
     cursor: "pointer", zIndex: "999999",
     borderRadius: "6px 0 0 6px", fontSize: "11px",
     userSelect: "none"
   });
-  arrow.innerHTML = "◀";
+  arrow.innerHTML = "❮";
 
   document.body.appendChild(panel);
   document.body.appendChild(arrow);
@@ -211,13 +245,13 @@ if (!document.getElementById("sidekick-panel")) {
     isOpen = true;
     panel.style.transform = "translateX(0)";
     arrow.style.right = panelW + "px";
-    arrow.innerHTML = "▶";
+    arrow.innerHTML = "❯";
   }
   function closePanel() {
     isOpen = false;
     panel.style.transform = `translateX(${panelW}px)`;
     arrow.style.right = "0";
-    arrow.innerHTML = "◀";
+    arrow.innerHTML = "❮";
   }
   arrow.addEventListener("click", () => isOpen ? closePanel() : openPanel());
 
@@ -304,29 +338,37 @@ if (!document.getElementById("sidekick-panel")) {
     row2.className = "sk-action-row";
 
     const capBtn = mk("button", "sk-btn primary");
-    capBtn.textContent = "＋ Capture";
+    capBtn.innerHTML = "";
+    capBtn.append(svgIcon("camera"), " Capture");
     capBtn.addEventListener("click", startCapture);
 
     const saveBtn = mk("button", "sk-btn");
-    saveBtn.textContent = "💾 Save";
+    saveBtn.innerHTML = "";
+    saveBtn.append(svgIcon("save"), " Save");
     saveBtn.addEventListener("click", () => {
       if (!contextOk()) {
         saveBtn.textContent = "⚠ Reload tab";
-        setTimeout(() => { saveBtn.textContent = "💾 Save"; }, 2000);
+        setTimeout(() => { saveBtn.innerHTML = "";
+        saveBtn.append(svgIcon("save"), " Save"); }, 2000);
         return;
       }
       chrome.storage.local.set({ [STORAGE_KEY]: getData() }, () => {
         if (chrome.runtime.lastError) { console.error(chrome.runtime.lastError); return; }
         saveBtn.textContent = "✓ Saved!";
-        setTimeout(() => { saveBtn.textContent = "💾 Save"; }, 1400);
+        setTimeout(() => { saveBtn.innerHTML = "";
+        saveBtn.append(svgIcon("save"), " Save"); }, 1400);
       });
     });
 
     const dlWrap = mk("div"); dlWrap.style.position = "relative";
-    const dlBtn = mk("button", "sk-btn"); dlBtn.textContent = "⬇ Download ▾";
-    const dlDrop = mk("div", "sk-dropdown"); dlDrop.style.display = "none";
-    [["📄 .txt", "txt"], ["📝 .doc (Word)", "docx"]].forEach(([lbl, fmt]) => {
-      const it = mk("div", "sk-dd-item"); it.textContent = lbl;
+    const dlBtn = mk("button", "sk-btn"); dlBtn.innerHTML = "";
+    dlBtn.append(svgIcon("download"), " Download ▾");
+    const dlDrop = mk("div", "sk-dropdown");
+    dlDrop.style.display = "none";
+
+    [["txt", "txt", " .txt"], ["docx", "docx", " .doc (Word)"]].forEach(([iconName, fmt, label]) => {
+      const it = mk("div", "sk-dd-item");
+      it.append(svgIcon(iconName), label);
       it.addEventListener("click", () => { downloadNotebook(nb, fmt); dlDrop.style.display = "none"; });
       dlDrop.appendChild(it);
     });
@@ -341,7 +383,7 @@ if (!document.getElementById("sidekick-panel")) {
     const notes = d.capturedItems.filter(n => n.notebookId === nb.id);
     if (!notes.length) {
       const empty = mk("div", "sk-empty");
-      empty.innerHTML = "No notes yet.<br>Click <b>＋ Capture</b> to start.";
+      empty.innerHTML = "No notes yet.<br>Click <b>Capture</b> to start.";
       bodySlot.appendChild(empty);
       return;
     }
@@ -350,23 +392,69 @@ if (!document.getElementById("sidekick-panel")) {
     lbl.textContent = `${notes.length} note${notes.length !== 1 ? "s" : ""}`;
     bodySlot.appendChild(lbl);
 
-    notes.slice().reverse().forEach(note => bodySlot.appendChild(noteCard(note, nb)));
+    // Most recent first, then float pinned notes to the top (stable sort
+    // preserves recency order within each group).
+    const ordered = notes.slice().reverse().sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+    ordered.forEach(note => bodySlot.appendChild(noteCard(note, nb)));
   }
 
   function noteCard(note, nb) {
-    const card = mk("div", "sk-note-card");
+    const card = mk("div", "sk-note-card" + (note.pinned ? " pinned" : ""));
 
-    const top = mk("div"); Object.assign(top.style, { display: "flex", alignItems: "center", gap: "6px", marginBottom: "6px", paddingRight: "24px" });
+    const top = mk("div"); Object.assign(top.style, { display: "flex", alignItems: "center", gap: "6px", marginBottom: "6px", paddingRight: "58px" });
+    if (note.pinned) {
+      const pinBadge = mk("span", "sk-pin-badge"); pinBadge.title = "Pinned";
+      pinBadge.appendChild(svgIcon("pin"));
+      top.appendChild(pinBadge);
+    }
     const tag = mk("span", `sk-tag ${note.type}`); tag.textContent = note.type;
-    const ts = mk("span"); Object.assign(ts.style, { fontSize: "11px", color: "#94a3b8", flex: "1" });
+    const ts = mk("span"); Object.assign(ts.style, { fontSize: "11px", color: "#8a8c6a", flex: "1" });
     ts.textContent = new Date(note.capturedAt).toLocaleString();
     top.append(tag, ts);
+
+    // Hover three-dot menu: Pin / Copy / Share
+    const menuWrap = mk("div", "sk-note-menu-wrap");
+    const menuBtn = mk("button", "sk-note-menu-btn"); menuBtn.title = "More options"; menuBtn.textContent = "⋯";
+    const menuDrop = mk("div", "sk-dropdown"); menuDrop.style.display = "none";
+
+    const closeMenu = () => { menuDrop.style.display = "none"; menuBtn.classList.remove("open"); };
+
+    const pinItem = mk("div", "sk-dd-item");
+    const pinLabel = mk("span"); pinLabel.textContent = note.pinned ? "Unpin" : "Pin";
+    pinItem.append(svgIcon("pin"), pinLabel);
+    pinItem.addEventListener("click", e => { e.stopPropagation(); closeMenu(); toggleNotePin(note); });
+
+    const copyItem = mk("div", "sk-dd-item");
+    const copyLabel = mk("span"); copyLabel.textContent = "Copy";
+    copyItem.append(svgIcon("copy"), copyLabel);
+    copyItem.addEventListener("click", e => {
+      e.stopPropagation();
+      copyNoteContent(note, copyItem);
+    });
+
+    const shareItem = mk("div", "sk-dd-item");
+    const shareLabel = mk("span"); shareLabel.textContent = "Share";
+    shareItem.append(svgIcon("share"), shareLabel);
+    shareItem.title = "Coming soon";
+    shareItem.addEventListener("click", e => { e.stopPropagation(); closeMenu(); shareNote(note); });
+
+    menuDrop.append(pinItem, copyItem, shareItem);
+    menuBtn.addEventListener("click", e => {
+      e.stopPropagation();
+      const willOpen = menuDrop.style.display === "none";
+      document.querySelectorAll(".sk-dropdown").forEach(dd => { dd.style.display = "none"; });
+      document.querySelectorAll(".sk-note-menu-btn.open").forEach(b => b.classList.remove("open"));
+      if (willOpen) { menuDrop.style.display = "block"; menuBtn.classList.add("open"); }
+    });
+    document.addEventListener("click", closeMenu);
+    menuWrap.append(menuBtn, menuDrop);
+    card.appendChild(menuWrap);
 
     const delBtn = mk("button", "sk-note-del"); delBtn.title = "Delete note"; delBtn.textContent = "✕";
     delBtn.addEventListener("click", () => { deleteNote(note, nb); });
     card.appendChild(delBtn);
 
-    const body = mk("div"); Object.assign(body.style, { fontSize: "13px", color: "#374151", marginBottom: "6px", lineHeight: "1.5" });
+    const body = mk("div"); Object.assign(body.style, { fontSize: "13px", color: "#2e2e1f", marginBottom: "6px", lineHeight: "1.5" });
 
     if (note.type === "image") {
       const img = mk("img"); img.src = note.content;
@@ -393,7 +481,7 @@ if (!document.getElementById("sidekick-panel")) {
       } else {
         console.log("[Sidekick] No thumbnail available, rendering fallback pill for:", watchUrl);
         const pill = mk("div");
-        pill.style.cssText = "background:#fce7f3;color:#9d174d;border-radius:6px;padding:10px 12px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:8px;";
+        pill.style.cssText = "background:#f5f0c0;color:#5c4a0a;border-radius:6px;padding:10px 12px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:8px;border:1px solid #c8cda8;";
         const short = watchUrl.slice(0, 60) + (watchUrl.length > 60 ? "\u2026" : "");
         pill.innerHTML = `<span style="font-size:20px">\ud83c\udfa6</span><span>${esc(short)}</span>`;
         wrap.appendChild(pill);
@@ -401,17 +489,80 @@ if (!document.getElementById("sidekick-panel")) {
 
       body.appendChild(wrap);
     } else {
-      body.textContent = note.content.slice(0, 180) + (note.content.length > 180 ? "…" : "");
+      const full = note.content || "";
+      const isLong = full.length > 180;
+      const textSpan = mk("span");
+      textSpan.textContent = isLong ? full.slice(0, 180) + "…" : full;
+      body.appendChild(textSpan);
+
+      if (isLong) {
+        const readMore = mk("span", "sk-read-more");
+        readMore.textContent = "Read more";
+        let expanded = false;
+        readMore.addEventListener("click", () => {
+          expanded = !expanded;
+          textSpan.textContent = expanded ? full : full.slice(0, 180) + "…";
+          readMore.textContent = expanded ? "Read less" : "Read more";
+        });
+        body.appendChild(mk("br"));
+        body.appendChild(readMore);
+      }
     }
 
     const src = mk("a"); src.href = note.sourceUrl; src.target = "_blank"; src.rel = "noopener noreferrer";
-    Object.assign(src.style, { fontSize: "11px", color: "#6b7280", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: "none" });
+    Object.assign(src.style, { fontSize: "11px", color: "#8a8c6a", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: "none" });
     src.textContent = note.sourceUrl;
     src.onmouseover = () => src.style.textDecoration = "underline";
     src.onmouseout = () => src.style.textDecoration = "none";
 
     card.append(top, body, src);
     return card;
+  }
+
+  function toggleNotePin(note) {
+    const d = getData();
+    const t = d.capturedItems.find(n => n.id === note.id);
+    if (!t) return;
+    t.pinned = !t.pinned;
+    setData(d);
+    if (currentView === "main") renderView("main");
+  }
+
+  function copyNoteContent(note, itemEl) {
+    const text = note.content || "";
+    const done = ok => {
+      if (!itemEl) return;
+      const orig = itemEl.textContent;
+      itemEl.textContent = ok ? "✓ Copied!" : "⚠ Copy failed";
+      setTimeout(() => { itemEl.textContent = orig; }, 1200);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => done(true)).catch(err => {
+        console.warn("[Sidekick] clipboard write failed:", err);
+        done(false);
+      });
+    } else {
+      try {
+        const ta = mk("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        done(true);
+      } catch (err) {
+        console.warn("[Sidekick] fallback copy failed:", err);
+        done(false);
+      }
+    }
+  }
+
+  function shareNote(note) {
+    // Placeholder — sharing isn't wired up yet.
+    console.log("[Sidekick] Share requested for note:", note.id);
+    alert("Share is coming soon!");
   }
 
   function inlineRename(nb, el) {
@@ -456,16 +607,16 @@ if (!document.getElementById("sidekick-panel")) {
       const left = mk("div"); Object.assign(left.style, { display: "flex", alignItems: "center", gap: "10px", flex: "1", minWidth: "0" });
       const ico = mk("span"); ico.textContent = "📓"; ico.style.fontSize = "18px";
       const info = mk("div"); info.style.cssText = "flex:1;min-width:0;";
-      const name = mk("div"); Object.assign(name.style, { fontSize: "14px", fontWeight: "600", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" });
+      const name = mk("div"); Object.assign(name.style, { fontSize: "14px", fontWeight: "600", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#2e2e1f" });
       name.textContent = nb.name;
-      const meta = mk("div"); meta.style.cssText = "font-size:11px;color:#94a3b8;margin-top:2px;";
+      const meta = mk("div"); meta.style.cssText = "font-size:11px;color:#8a8c6a;margin-top:2px;";
       meta.textContent = `${cnt} note${cnt !== 1 ? "s" : ""} · ${new Date(nb.createdAt).toLocaleDateString()}`;
       info.append(name, meta);
       left.append(ico, info);
 
       const right = mk("div"); right.style.cssText = "display:flex;align-items:center;gap:4px;flex-shrink:0;";
       if (nb.id === d.activeNotebookId) {
-        const pill = mk("span"); pill.style.cssText = "font-size:11px;color:#2563eb;font-weight:600;padding:2px 8px;background:#dbeafe;border-radius:10px;";
+        const pill = mk("span"); pill.style.cssText = "font-size:11px;color:#484f28;font-weight:600;padding:2px 8px;background:#d1ffbd;border-radius:10px;border:1px solid #8fbd6a;";
         pill.textContent = "Active"; right.appendChild(pill);
       }
       const del = iconBtn("🗑", "Delete"); del.style.fontSize = "13px";
@@ -509,7 +660,7 @@ if (!document.getElementById("sidekick-panel")) {
       return;
     }
 
-    const info = mk("p"); info.style.cssText = "font-size:12px;color:#94a3b8;margin-bottom:12px;";
+    const info = mk("p"); info.style.cssText = "font-size:12px;color:#8a8c6a;margin-bottom:12px;";
     info.textContent = "Items are permanently deleted after 30 days.";
     bodySlot.appendChild(info);
 
@@ -533,7 +684,7 @@ if (!document.getElementById("sidekick-panel")) {
     const top = mk("div"); Object.assign(top.style, { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "8px" });
 
     const info = mk("div"); info.style.flex = "1";
-    const name = mk("div"); name.style.cssText = "font-size:13px;font-weight:600;color:#374151;";
+    const name = mk("div"); name.style.cssText = "font-size:13px;font-weight:600;color:#2e2e1f;";
     const meta = mk("div"); meta.className = "sk-bin-meta";
 
     if (entry.type === "notebook") {
@@ -668,21 +819,21 @@ if (!document.getElementById("sidekick-panel")) {
       triggerDL(new Blob([txt], { type: "text/plain" }), nb.name + ".txt");
     } else {
       let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(nb.name)}</title>
-<style>body{font-family:Arial,sans-serif;max-width:700px;margin:40px auto;color:#222}
-h1{font-size:22px;border-bottom:2px solid #2563eb;padding-bottom:8px}
-.note{border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-bottom:16px}
+<style>body{font-family:Arial,sans-serif;max-width:700px;margin:40px auto;color:#2e2e1f}
+h1{font-size:22px;border-bottom:2px solid #5a6132;padding-bottom:8px}
+.note{border:1px solid #c8cda8;border-radius:8px;padding:14px;margin-bottom:16px;background:#fafff5}
 .tag{display:inline-block;font-size:11px;font-weight:700;padding:2px 6px;border-radius:3px;text-transform:uppercase;margin-bottom:6px}
-.text{background:#dbeafe;color:#1d4ed8}.image{background:#d1fae5;color:#065f46}
-.video{background:#fce7f3;color:#9d174d}.iframe{background:#fef3c7;color:#92400e}
-.meta{font-size:12px;color:#9ca3af;margin-bottom:6px}.content{font-size:14px;line-height:1.6;word-break:break-word}
-img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8px}a{color:#2563eb}
+.text{background:#e8f5d0;color:#2e3d0a}.image{background:#d1fae5;color:#065f46}
+.video{background:#fce7f3;color:#9d174d}.iframe{background:#f5f0c0;color:#5c4a0a}
+.meta{font-size:12px;color:#8a8c6a;margin-bottom:6px}.content{font-size:14px;line-height:1.6;word-break:break-word}
+img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8px}a{color:#5a6132}
 </style></head><body><h1>📓 ${esc(nb.name)}</h1>
-<p style="color:#9ca3af;font-size:13px">Exported ${new Date().toLocaleString()} · ${notes.length} note${notes.length!==1?"s":""}</p>`;
+<p style="color:#8a8c6a;font-size:13px">Exported ${new Date().toLocaleString()} · ${notes.length} note${notes.length!==1?"s":""}</p>`;
       notes.forEach((n, i) => {
         html += `<div class="note"><span class="tag ${n.type}">${n.type}</span>
 <div class="meta">#${i+1} · ${new Date(n.capturedAt).toLocaleString()}</div>
 <div class="content">${n.type==="image"?`<img src="${esc(n.content)}" alt="captured image">`:esc(n.content)}</div>
-<div style="margin-top:8px;font-size:11px;color:#9ca3af">Source: <a href="${esc(n.sourceUrl)}" target="_blank">${esc(n.sourceUrl)}</a></div></div>`;
+<div style="margin-top:8px;font-size:11px;color:#8a8c6a">Source: <a href="${esc(n.sourceUrl)}" target="_blank">${esc(n.sourceUrl)}</a></div></div>`;
       });
       html += "</body></html>";
       triggerDL(new Blob([html], { type: "application/vnd.ms-word" }), nb.name + ".doc");
@@ -701,39 +852,43 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
   captureBar.id = "sidekick-capture-bar";
   Object.assign(captureBar.style, {
     position: "fixed", bottom: "0", left: "0", right: "0", height: "54px",
-    background: "#0f172a", color: "white", display: "none",
+    background: "#2e2e1f", color: "#d1ffbd",
+    boxShadow: "0 -2px 16px rgba(46,46,31,0.35)",
+    display: "none",
     alignItems: "center", justifyContent: "space-between",
     padding: "0 18px", zIndex: "9999999",
     fontFamily: "system-ui,sans-serif", fontSize: "13px",
-    boxShadow: "0 -2px 16px rgba(0,0,0,0.25)"
   });
   document.body.appendChild(captureBar);
 
   function cbBtn(txt, bg) {
     const b = mk("button");
-    Object.assign(b.style, { padding: "5px 12px", cursor: "pointer", fontSize: "12px", background: bg||"#1e293b", color: "white", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "5px", marginLeft: "7px", whiteSpace: "nowrap" });
+    Object.assign(b.style, { padding: "5px 12px", cursor: "pointer", fontSize: "12px", background: bg || "#3d5228", color: "#d1ffbd", border: "1px solid rgba(209,255,189,0.2)", borderRadius: "5px", marginLeft: "7px", whiteSpace: "nowrap" });
     b.textContent = txt; return b;
   }
   function cbl(html, color) {
-    const s = mk("span"); s.style.color = color || "#94a3b8"; s.innerHTML = html; return s;
+    const s = mk("span"); s.style.color = color || "#8fbd6a"; s.innerHTML = html; return s;
   }
 
   function showBarArmed() {
     captureBar.style.display = "flex"; captureBar.innerHTML = "";
-    const L = row(); L.append(cbl("🎯"), cbl(" Capture mode — click an element or select text"));
+    const L = row();
+    L.append(svgIcon("camera", "margin-right:6px"), cbl(" Capture mode — click an element or select text", "#d1ffbd"));
     const R = row();
-    R.append(cbl("Esc to cancel", "#475569"));
-    const c = cbBtn("✕ Cancel"); c.addEventListener("click", () => { disableCaptureMode(); hideBar(); }); R.appendChild(c);
+    R.append(cbl("Esc to cancel", "#8fbd6a"));
+    const c = cbBtn("✕");
+    c.addEventListener("click", () => { disableCaptureMode(); hideBar(); });
+    R.appendChild(c);
     captureBar.append(L, R);
   }
 
   function showBarCaptured(item) {
     captureBar.style.display = "flex"; captureBar.innerHTML = "";
-    const colors = { text:"#3b82f6", image:"#10b981", video:"#ec4899", iframe:"#f59e0b" };
+    const colors = { text:"#5a6132", image:"#4a6632", video:"#7a5a1e", iframe:"#6a5228" };
     const L = row(); L.style.gap = "8px"; L.style.overflow = "hidden";
-    const tag = mk("span"); tag.style.cssText = `background:${colors[item.type]||"#64748b"};color:#fff;font-weight:700;font-size:10px;padding:2px 7px;border-radius:3px;text-transform:uppercase;flex-shrink:0;`;
+    const tag = mk("span"); tag.style.cssText = `background:${colors[item.type]||"#5a6132"};color:#d1ffbd;font-weight:700;font-size:10px;padding:2px 7px;border-radius:3px;text-transform:uppercase;flex-shrink:0;`;
     tag.textContent = item.type;
-    const prev = mk("span"); Object.assign(prev.style, { color:"#cbd5e1", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"340px" });
+    const prev = mk("span"); Object.assign(prev.style, { color:"#d1ffbd", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"340px" });
     if (item.type==="image") {
       const th = mk("img"); Object.assign(th.style, { height:"26px", width:"26px", objectFit:"cover", borderRadius:"3px", verticalAlign:"middle", marginRight:"5px" }); th.src = item.content;
       prev.appendChild(th); prev.append(item.content.split("/").pop().slice(0,40));
@@ -746,19 +901,19 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
     }
     L.append(tag, prev);
     const R = row();
-    const u = cbBtn("↩ Undo"); u.addEventListener("click", () => { undoLastCapture(); showBarUndone(); }); R.appendChild(u);
-    const m = cbBtn("＋ More","#1d4ed8"); m.addEventListener("click", () => { showBarArmed(); enableCaptureMode(); }); R.appendChild(m);
-    const d2 = cbBtn("✓ Done","#15803d"); d2.addEventListener("click", () => { hideBar(); openPanel(); }); R.appendChild(d2);
+    const u = cbBtn("↩"); u.addEventListener("click", () => { undoLastCapture(); showBarUndone(); }); R.appendChild(u);
+    const m = cbBtn("＋"); m.addEventListener("click", () => { showBarArmed(); enableCaptureMode(); }); R.appendChild(m);
+    const d2 = cbBtn("✓"); d2.addEventListener("click", () => { hideBar(); openPanel(); }); R.appendChild(d2);
     captureBar.append(L, R);
   }
 
   function showBarUndone() {
     captureBar.style.display = "flex"; captureBar.innerHTML = "";
-    const L = row(); L.append(cbl("↩ Note moved to Recycle Bin", "#fbbf24"));
+    const L = row(); L.append(cbl("↩ Note moved to Recycle Bin", "#f5f0c0"));
     const R = row();
-    const re = cbBtn("⟳ Redo","#6d28d9"); re.addEventListener("click", () => { const it = redoLastCapture(); if(it) showBarCaptured(it); }); R.appendChild(re);
-    const m = cbBtn("＋ More","#1d4ed8"); m.addEventListener("click", () => { showBarArmed(); enableCaptureMode(); }); R.appendChild(m);
-    const c = cbBtn("✕ Done"); c.addEventListener("click", () => hideBar()) ; R.appendChild(c);
+    const re = cbBtn("⟳"); re.addEventListener("click", () => { const it = redoLastCapture(); if(it) showBarCaptured(it); }); R.appendChild(re);
+    const m = cbBtn("＋"); m.addEventListener("click", () => { showBarArmed(); enableCaptureMode(); }); R.appendChild(m);
+    const c = cbBtn("✕"); c.addEventListener("click", () => hideBar()); R.appendChild(c);
     captureBar.append(L, R);
   }
 
@@ -882,8 +1037,6 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
 
     console.log("[Sidekick] click: target tag=%s, id=%s, classes=%s", e.target.tagName, e.target.id, e.target.className);
 
-    const videoCard = e.target.closest("[data-ved][class*='kSFuOd'], [data-ved] a[href*='youtube'], .mnr-c.yl2NZc, [jsname]");
-    // Broader: walk up to find an ancestor with a real URL
     const cardWithUrl = findGoogleVideoCard(e.target);
     if (cardWithUrl) {
       const item = saveCapturedData(cardWithUrl);
@@ -974,58 +1127,49 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
   }
 
   function findGoogleVideoCard(el) {
-      // Walk up the DOM looking for a Google video card with a resolvable URL
-      let node = el;
-      for (let i = 0; i < 12 && node; i++) {
-        // Check for data-url, data-href, or an <a> anywhere inside the card
-        const dataUrl = node.dataset && (node.dataset.url || node.dataset.href || node.dataset.pUrl);
-        if (dataUrl) {
-          console.log("[Sidekick] findGoogleVideoCard: found data-url:", dataUrl);
-          const info = parseVideoUrl(dataUrl);
-          if (info) {
-            const thumb = findThumbInCard(node) || info.thumb;
-            return { type: "video", content: info.pageUrl, thumb, platform: info.platform, pageUrl: location.href };
-          }
+    let node = el;
+    for (let i = 0; i < 12 && node; i++) {
+      const dataUrl = node.dataset && (node.dataset.url || node.dataset.href || node.dataset.pUrl);
+      if (dataUrl) {
+        console.log("[Sidekick] findGoogleVideoCard: found data-url:", dataUrl);
+        const info = parseVideoUrl(dataUrl);
+        if (info) {
+          const thumb = findThumbInCard(node) || info.thumb;
+          return { type: "video", content: info.pageUrl, thumb, platform: info.platform, pageUrl: location.href };
         }
-
-        // Look for a real <a href> inside this card node
-        const anchor = node.querySelector && node.querySelector("a[href*='youtube.com'], a[href*='youtu.be'], a[href*='vimeo.com'], a[href*='dailymotion.com']");
-        if (anchor) {
-          console.log("[Sidekick] findGoogleVideoCard: found anchor inside card:", anchor.href);
-          const info = parseVideoUrl(anchor.href);
-          if (info) {
-            const thumb = findThumbInCard(node) || info.thumb;
-            return { type: "video", content: info.pageUrl, thumb, platform: info.platform, pageUrl: location.href };
-          }
-        }
-
-        // Check the node itself if it's an anchor
-        if (node.tagName === "A" && node.href) {
-          const info = parseVideoUrl(node.href);
-          if (info) {
-            const thumb = findThumbInCard(node) || info.thumb;
-            return { type: "video", content: info.pageUrl, thumb, platform: info.platform, pageUrl: location.href };
-          }
-        }
-
-        node = node.parentElement;
       }
-      return null;
+      const anchor = node.querySelector && node.querySelector("a[href*='youtube.com'], a[href*='youtu.be'], a[href*='vimeo.com'], a[href*='dailymotion.com']");
+      if (anchor) {
+        console.log("[Sidekick] findGoogleVideoCard: found anchor inside card:", anchor.href);
+        const info = parseVideoUrl(anchor.href);
+        if (info) {
+          const thumb = findThumbInCard(node) || info.thumb;
+          return { type: "video", content: info.pageUrl, thumb, platform: info.platform, pageUrl: location.href };
+        }
+      }
+      if (node.tagName === "A" && node.href) {
+        const info = parseVideoUrl(node.href);
+        if (info) {
+          const thumb = findThumbInCard(node) || info.thumb;
+          return { type: "video", content: info.pageUrl, thumb, platform: info.platform, pageUrl: location.href };
+        }
+      }
+      node = node.parentElement;
     }
+    return null;
+  }
 
-    function findThumbInCard(cardEl) {
-      // Find the best thumbnail image within the card
-      const img = cardEl.querySelector && (
-        cardEl.querySelector("img[src*='ytimg'], img[src*='youtube'], img[src*='vi/'], img[data-src]") ||
-        cardEl.querySelector("img")
-      );
-      if (!img) return null;
-      const src = img.src || img.dataset.src || "";
-      // Skip tiny icons/avatars (under 60px)
-      if (img.naturalWidth > 0 && img.naturalWidth < 60) return null;
-      console.log("[Sidekick] findThumbInCard: found img src:", src.slice(0, 80));
-      return src || null;
-    }
+  function findThumbInCard(cardEl) {
+    const img = cardEl.querySelector && (
+      cardEl.querySelector("img[src*='ytimg'], img[src*='youtube'], img[src*='vi/'], img[data-src]") ||
+      cardEl.querySelector("img")
+    );
+    if (!img) return null;
+    const src = img.src || img.dataset.src || "";
+    if (img.naturalWidth > 0 && img.naturalWidth < 60) return null;
+    console.log("[Sidekick] findThumbInCard: found img src:", src.slice(0, 80));
+    return src || null;
+  }
 
   function parseVideoUrl(url) {
     if (!url) return null;
@@ -1181,6 +1325,27 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
 
     console.warn("[Sidekick] handleEl: nothing captured from element or selection");
     return null;
+  }
+
+  const ICONS = {
+    camera: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M5 7h1a2 2 0 0 0 2 -2a1 1 0 0 1 1 -1h6a1 1 0 0 1 1 1a2 2 0 0 0 2 2h1a2 2 0 0 0 2 2v9a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-9a2 2 0 0 0 2 -2"/><circle cx="12" cy="13" r="3"/></svg>`,
+    download: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2"/><path d="M7 11l5 5l5 -5"/><path d="M12 4l0 12"/></svg>`,
+    save: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M6 4h10l4 4v10a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2"/><path d="M12 14m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M14 4l0 4l-6 0l0 -4"/></svg>`,
+    pin: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M9 4v6l-2 4v2h10v-2l-2 -4v-6"/><path d="M12 16l0 5"/><path d="M8 4l8 0"/></svg>`,
+    share: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-share" viewBox="0 0 16 16"><path d="M13.5 1a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3M11 2.5a2.5 2.5 0 1 1 .603 1.628l-6.718 3.12a2.5 2.5 0 0 1 0 1.504l6.718 3.12a2.5 2.5 0 1 1-.488.876l-6.718-3.12a2.5 2.5 0 1 1 0-3.256l6.718-3.12A2.5 2.5 0 0 1 11 2.5m-8.5 4a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3m11 5.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3"/</svg>`,
+    copy:`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-copy" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M4 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1h1v1a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h1v1z"/></svg>`,
+    docx: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M5 12v-7a2 2 0 0 1 2 -2h7l5 5v4"/><path d="M5 21v-6h14v6"/><text x="12" y="19.5" font-size="6" font-family="Arial, Helvetica, sans-serif" font-weight="700" stroke="none" fill="currentColor" text-anchor="middle">W</text></svg>`,    txt: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M5 12v-7a2 2 0 0 1 2 -2h7l5 5v4"/><path d="M5 15h3"/><path d="M5 18h3"/><path d="M13 15h6"/><path d="M13 18h6"/></svg>`,
+  };
+
+  function svgIcon(name, style = "") {
+    const wrap = mk("span");
+    wrap.innerHTML = ICONS[name] || "";
+    wrap.setAttribute("aria-hidden", "true");
+    if (style) wrap.style.cssText = style;
+    wrap.style.display = "inline-flex";
+    wrap.style.alignItems = "center";
+    wrap.style.verticalAlign = "middle";
+    return wrap;
   }
 
   function mk(tag, cls) {
