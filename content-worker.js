@@ -3,6 +3,8 @@ if (!document.getElementById("sidekick-panel")) {
   const STORAGE_KEY = "sidekick_data";
   let _cache = null;
   let _contextAlive = true;
+  let noteSearchQuery = "";
+  let notebookSearchQuery = "";
 
   function contextOk() {
     if (!_contextAlive) return false;
@@ -31,7 +33,7 @@ if (!document.getElementById("sidekick-panel")) {
   }
 
   function initData() {
-    const nb = { id: uid(), name: "My First Notebook", createdAt: now() };
+    const nb = { id: uid(), name: "My First Notebook", createdAt: now(), labels: [] };
     return { notebooks: [nb], capturedItems: [], activeNotebookId: nb.id, recycleBin: [] };
   }
 
@@ -72,6 +74,9 @@ if (!document.getElementById("sidekick-panel")) {
 
   function uid() { return "id_" + Math.random().toString(36).slice(2) + Date.now().toString(36); }
   function now() { return new Date().toISOString(); }
+  function clearSelection() {
+    try { window.getSelection().removeAllRanges(); } catch (_) {}
+  }
 
   function purgeBin() {
     const d = getData();
@@ -87,6 +92,7 @@ if (!document.getElementById("sidekick-panel")) {
   let captureStyleEl = null;
   let currentView = "main";
   let panelW = 480;
+  let captureBarMode = "hidden"; // "hidden" | "armed" | "captured" | "undone"
 
   document.addEventListener("selectionchange", () => {
     const t = window.getSelection().toString().trim();
@@ -94,74 +100,95 @@ if (!document.getElementById("sidekick-panel")) {
   });
 
   // ── PALETTE ──────────────────────────────────────────────────────────────
-  // olive:        #5a6132  (dark)   #484f28  (darker)   #3d5228  (arrow)
-  // butter:       #f5f0c0  (bg wash)  #ede8a8  (hover)
-  // light green:  #d1ffbd  (active/highlight)  #edf5d0  (header tint)
-  // text dark:    #2e2e1f
-  // border:       #c8cda8  (normal)  #8a8c6a  (hover)
+  // olive:      #2f8fcf  (dark)   #1f6fac  (darker)   #164971  (arrow)
+  // butter:     #eaf6fd  (bg wash)  #d7edfb  (hover)
+  // white:      #ffffff  (cards/inputs)
+  // sky blue:   #cfeeff  (active/highlight)  #eaf6fd  (header/pinned tint)  #7ec4ea  (accent border)
+  // text dark:  #1e293b
+  // border:     #bfe0fa  (normal)  #5b7a90  (hover)
   // ─────────────────────────────────────────────────────────────────────────
 
   const styleEl = document.createElement("style");
   styleEl.id = "sidekick-styles";
   styleEl.textContent = `
     #sidekick-panel, #sidekick-panel * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; margin: 0; }
-    #sidekick-panel { scrollbar-width: thin; scrollbar-color: #8fbd6a transparent; }
+    #sidekick-panel, #sidekick-panel *,
+    #sidekick-arrow,
+    #sidekick-capture-bar, #sidekick-capture-bar *,
+    .sk-label-popover, .sk-label-popover *,
+    .sk-dropdown, .sk-dropdown * {
+      user-select: none; -webkit-user-select: none; -moz-user-select: none;
+    }
+    #sidekick-panel input, #sidekick-panel textarea,
+    .sk-label-popover input, .sk-label-popover textarea {
+      user-select: text; -webkit-user-select: text; -moz-user-select: text;
+    }
+    .sk-label-popover, .sk-label-popover *,
+    .sk-dropdown, .sk-dropdown * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; margin: 0; }
+    #sidekick-panel { scrollbar-width: thin; scrollbar-color: #7ec4ea transparent; }
     #sidekick-body::-webkit-scrollbar { width: 6px; }
     #sidekick-body::-webkit-scrollbar-track { background: transparent; }
-    #sidekick-body::-webkit-scrollbar-thumb { background: #8fbd6a; border-radius: 3px; }
+    #sidekick-body::-webkit-scrollbar-thumb { background: #7ec4ea; border-radius: 3px; }
 
-    .sk-btn { padding: 6px 13px; cursor: pointer; font-size: 13px; border-radius: 6px; border: 1px solid #c8cda8; background: #f5f0c0; color: #2e2e1f; transition: all 0.12s; white-space: nowrap; line-height: 1.4; }
-    .sk-btn:hover { background: #ede8a8; border-color: #8a8c6a; }
-    .sk-btn.primary { background: #5a6132; color: #f7f5e8; border-color: #5a6132; }
-    .sk-btn.primary:hover { background: #484f28; border-color: #484f28; }
+    .sk-btn { padding: 6px 13px; cursor: pointer; font-size: 13px; border-radius: 6px; border: 1px solid #bfe0fa; background: #eaf6fd; color: #1e293b; transition: all 0.12s; white-space: nowrap; line-height: 1.4; }
+    .sk-btn:hover { background: #d7edfb; border-color: #5b7a90; }
+    .sk-btn.primary { background: #2f8fcf; color: #ffffff; border-color: #2f8fcf; }
+    .sk-btn.primary:hover { background: #1f6fac; border-color: #1f6fac; }
     .sk-btn.danger { color: #8b2e2e; border-color: #d4a5a5; background: #fdf6f6; }
     .sk-btn.danger:hover { background: #f9eded; }
 
-    .sk-icon-btn { width: 28px; height: 28px; border-radius: 6px; border: none; background: transparent; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-size: 15px; transition: background 0.12s; flex-shrink: 0; padding: 0; }
-    .sk-icon-btn:hover { background: #ede8a8; }
+    .sk-icon-btn { width: 28px; height: 28px; border-radius: 6px; border: none; background: transparent; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-size: 15px; color: #1e293b; transition: background 0.12s; flex-shrink: 0; padding: 0; }
+    .sk-icon-btn:hover { background: #d7edfb; }
 
-    .sk-note-card { border: 1px solid #c8cda8; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; background: #fafff5; position: relative; transition: border-color 0.12s, background 0.12s; }
-    .sk-note-card:hover { border-color: #8a8c6a; }
+    .sk-note-card { border: 1px solid #bfe0fa; border-radius: 8px; padding: 10px 12px 10px 32px; margin-bottom: 12px; background: #ffffff; position: relative; transition: border-color 0.12s, background 0.12s; }
+    .sk-note-card:hover { border-color: #5b7a90; }
     .sk-note-card:hover .sk-note-del { opacity: 1; }
     .sk-note-card:hover .sk-note-menu-btn { opacity: 1; }
-    .sk-note-card.pinned { border-color: #8fbd6a; background: #f7ffe9; }
-    .sk-note-del { position: absolute; top: 7px; right: 7px; opacity: 0; transition: opacity 0.12s; width: 22px; height: 22px; border-radius: 4px; border: none; background: transparent; cursor: pointer; font-size: 12px; color: #8a8c6a; display: inline-flex; align-items: center; justify-content: center; }
+    .sk-note-card.pinned { border-color: #7ec4ea; background: #eaf6fd; }
+    .sk-note-card.sk-dragging { opacity: 0.6; box-shadow: 0 6px 18px rgba(30,41,59,0.2); border-color: #2f8fcf; z-index: 5; }
+
+    .sk-drag-handle { position: absolute; left: 4px; top: 50%; transform: translateY(-50%); width: 22px; height: 30px; display: flex; align-items: center; justify-content: center; color: #9fb8ca; cursor: grab; touch-action: none; }
+    .sk-drag-handle:hover { color: #2f8fcf; }
+    .sk-drag-handle:active { cursor: grabbing; }
+    .sk-drag-handle.disabled { opacity: 0.3; cursor: default; pointer-events: none; }
+    .sk-note-del { position: absolute; top: 7px; right: 7px; opacity: 0; transition: opacity 0.12s; width: 22px; height: 22px; border-radius: 4px; border: none; background: transparent; cursor: pointer; font-size: 12px; color: #5b7a90; display: inline-flex; align-items: center; justify-content: center; }
     .sk-note-del:hover { background: #f4dada; color: #8b2e2e; }
 
     .sk-note-menu-wrap { position: absolute; top: 7px; right: 33px; }
-    .sk-note-menu-btn { opacity: 0; transition: opacity 0.12s; width: 22px; height: 22px; border-radius: 4px; border: none; background: transparent; cursor: pointer; font-size: 15px; line-height: 1; color: #8a8c6a; display: inline-flex; align-items: center; justify-content: center; }
-    .sk-note-menu-btn:hover { background: #ede8a8; color: #2e2e1f; }
-    .sk-note-menu-btn.open { opacity: 1; background: #ede8a8; color: #2e2e1f; }
+    .sk-note-menu-btn { opacity: 0; transition: opacity 0.12s; width: 22px; height: 22px; border-radius: 4px; border: none; background: transparent; cursor: pointer; font-size: 15px; line-height: 1; color: #5b7a90; display: inline-flex; align-items: center; justify-content: center; }
+    .sk-note-menu-btn:hover { background: #d7edfb; color: #1e293b; }
+    .sk-note-menu-btn.open { opacity: 1; background: #d7edfb; color: #1e293b; }
 
-    .sk-pin-badge { display: inline-flex; align-items: center; margin-right: 2px; color: #5a6132; }
+    .sk-pin-badge { display: inline-flex; align-items: center; margin-right: 2px; color: #2f8fcf; }
     .sk-pin-badge svg { width: 13px; height: 13px; display: block; }
 
-    .sk-read-more { font-size: 12px; color: #5a6132; cursor: pointer; font-weight: 600; margin-top: 4px; display: inline-block; }
+    .sk-read-more { font-size: 12px; color: #2f8fcf; cursor: pointer; font-weight: 600; margin-top: 4px; display: inline-block; }
     .sk-read-more:hover { text-decoration: underline; }
+    .sk-highlight { background: #a8d8f5; color: #1e293b; border-radius: 2px; padding: 0 1px; font-weight: 700; }
 
-    .sk-nb-card { border: 1px solid #c8cda8; border-radius: 8px; padding: 11px 13px; margin-bottom: 8px; background: #fafff5; cursor: pointer; transition: border-color 0.12s, box-shadow 0.12s; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-    .sk-nb-card:hover { border-color: #8a8c6a; box-shadow: 0 0 0 3px rgba(209,255,189,0.45); }
-    .sk-nb-card.active { border-color: #5a6132; background: #d1ffbd; }
+    .sk-nb-card { border: 1px solid #bfe0fa; border-radius: 8px; padding: 11px 13px; margin-bottom: 12px; background: #ffffff; cursor: pointer; transition: border-color 0.12s, box-shadow 0.12s; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .sk-nb-card:hover { border-color: #7ec4ea; box-shadow: 0 0 0 3px rgba(126,196,234,0.35); }
+    .sk-nb-card.active { border-color: #2f8fcf; background: #cfeeff; }
 
     .sk-tag { display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 3px; text-transform: uppercase; letter-spacing: 0.4px; }
-    .sk-tag.text  { background: #e8f5d0; color: #2e3d0a; }
-    .sk-tag.image { background: #d1fae5; color: #065f46; }
-    .sk-tag.video { background: #fce7f3; color: #9d174d; }
-    .sk-tag.iframe{ background: #f5f0c0; color: #5c4a0a; }
+    .sk-tag.text  { background: #dceefc; color: #0c4a6e; }
+    .sk-tag.image { background: #cfe8fb; color: #0a4a75; }
+    .sk-tag.video { background: #b3daf7; color: #08395c; }
+    .sk-tag.iframe{ background: #eaf6fd; color: #14587d; }
 
-    .sk-input { border: 1px solid #c8cda8; border-radius: 6px; padding: 6px 10px; font-size: 13px; width: 100%; outline: none; background: #fafff5; color: #2e2e1f; }
-    .sk-input:focus { border-color: #5a6132; box-shadow: 0 0 0 2px rgba(209,255,189,0.5); }
+    .sk-input { border: 1px solid #bfe0fa; border-radius: 6px; padding: 6px 10px; font-size: 13px; width: 100%; outline: none; background: #ffffff; color: #1e293b; }
+    .sk-input:focus { border-color: #2f8fcf; box-shadow: 0 0 0 2px rgba(126,196,234,0.4); }
 
-    .sk-section-lbl { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.7px; color: #8a8c6a; margin-bottom: 8px; display: block; }
-    .sk-empty { color: #8a8c6a; font-size: 13px; text-align: center; padding: 40px 16px; line-height: 1.6; }
+    .sk-section-lbl { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.7px; color: #5b7a90; margin-bottom: 8px; display: block; }
+    .sk-empty { color: #5b7a90; font-size: 13px; text-align: center; padding: 40px 16px; line-height: 1.6; }
 
-    .sk-bin-card { border: 1px solid #d4b8a5; border-radius: 8px; padding: 11px 13px; margin-bottom: 8px; background: #fdf6f0; }
-    .sk-bin-meta { font-size: 11px; color: #8b4a2e; margin-top: 3px; }
+    .sk-bin-card { border: 1px solid #bfe0fa; border-radius: 8px; padding: 11px 13px; margin-bottom: 8px; background: #eaf6fd; }
+    .sk-bin-meta { font-size: 11px; color: #5b7a90; margin-top: 3px; }
 
-    .sk-dropdown { position: absolute; top: calc(100% + 4px); right: 0; background: #fafff5; border: 1px solid #c8cda8; border-radius: 8px; box-shadow: 0 4px 16px rgba(46,46,31,0.12); z-index: 10000; min-width: 150px; overflow: hidden; }
-    .sk-dd-item { padding: 9px 14px; cursor: pointer; font-size: 13px; color: #2e2e1f; display: flex; align-items: center; gap: 8px; }
-    .sk-dd-item:hover { background: #ede8a8; }
-    .sk-dd-item.disabled { color: #b5b89a; cursor: default; }
+    .sk-dropdown { position: absolute; top: calc(100% + 4px); right: 0; background: #ffffff; border: 1px solid #bfe0fa; border-radius: 8px; box-shadow: 0 4px 16px rgba(46,46,31,0.12); z-index: 10000; min-width: 150px; overflow: hidden; }
+    .sk-dd-item { padding: 9px 14px; cursor: pointer; font-size: 13px; color: #1e293b; display: flex; align-items: center; gap: 8px; }
+    .sk-dd-item:hover { background: #d7edfb; }
+    .sk-dd-item.disabled { color: #9fb8ca; cursor: default; }
     .sk-dd-item.disabled:hover { background: transparent; }
 
     .sk-resize-h { position: absolute; left: 0; top: 0; width: 5px; height: 100%; cursor: ew-resize; z-index: 10; background: transparent; }
@@ -169,16 +196,22 @@ if (!document.getElementById("sidekick-panel")) {
     .sk-resize-v { position: absolute; left: 0; bottom: 0; width: 100%; height: 5px; cursor: ns-resize; z-index: 10; background: transparent; }
     .sk-resize-v:hover, .sk-resize-v.dragging { background: rgba(90,97,50,0.3); }
 
-    .sk-header { padding: 13px 14px 10px; border-bottom: 1px solid #c8cda8; background: #edf5d0; flex-shrink: 0; }
+    .sk-header { padding: 13px 14px 10px; border-bottom: 1px solid #bfe0fa; background: #eaf6fd; flex-shrink: 0; }
     .sk-header-row { display: flex; align-items: center; gap: 6px; margin-bottom: 9px; }
     .sk-action-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 
-    .sk-nb-name { font-size: 15px; font-weight: 700; color: #2e2e1f; flex: 1; min-width: 0; cursor: pointer; padding: 3px 5px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .sk-nb-name:hover { background: #ede8a8; }
-    .sk-view-title { font-size: 15px; font-weight: 700; color: #2e2e1f; flex: 1; }
+    .sk-nb-name { font-size: 15px; font-weight: 700; color: #1e293b; flex: 1; min-width: 0; cursor: pointer; padding: 3px 5px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sk-nb-name:hover { background: #d7edfb; }
+    .sk-view-title { font-size: 15px; font-weight: 700; color: #1e293b; flex: 1; }
 
-    .sk-sync-dot { width: 6px; height: 6px; border-radius: 50%; background: #5a6132; display: inline-block; margin-left: 4px; opacity: 0; transition: opacity 0.3s; }
+    .sk-sync-dot { width: 6px; height: 6px; border-radius: 50%; background: #2f8fcf; display: inline-block; margin-left: 4px; opacity: 0; transition: opacity 0.3s; }
     .sk-sync-dot.active { opacity: 1; }
+
+    .sk-label-chip { display:inline-block; font-size:10px; font-weight:600; padding:1px 6px; border-radius:8px; background:#dceefc; color:#0c4a6e; margin-right:4px; margin-top:3px; border:1px solid #9fd0f3; }
+    .sk-label-popover { position: fixed; z-index: 1000000; background: #ffffff; border: 1px solid #bfe0fa; border-radius: 8px; box-shadow: 0 4px 16px rgba(46,46,31,0.18); padding: 12px; width: 230px; }
+    .sk-label-popover .sk-input { margin-top: 2px; }
+    .sk-label-group-hdr { font-size: 11px; font-weight: 700; color: #1f6fac; margin: 18px 0 10px; text-transform: uppercase; letter-spacing: 0.6px; display: flex; align-items: center; gap: 5px; }
+    .sk-label-group-hdr:first-child { margin-top: 0; }
   `;
   document.head.appendChild(styleEl);
 
@@ -187,7 +220,7 @@ if (!document.getElementById("sidekick-panel")) {
   Object.assign(panel.style, {
     position: "fixed", top: "0", right: "0",
     height: "100vh", width: panelW + "px",
-    background: "#f5f0c0", color: "#2e2e1f",
+    background: "#eaf6fd", color: "#1e293b",
     boxShadow: "-4px 0 24px rgba(46,46,31,0.12)",
     transform: `translateX(${panelW}px)`,
     transition: "transform 0.25s ease",
@@ -224,7 +257,7 @@ if (!document.getElementById("sidekick-panel")) {
     position: "fixed", top: "50%", right: "0",
     transform: "translateY(-50%)",
     width: "20px", height: "60px",
-    background: "#3d5228", color: "#d1ffbd",
+    background: "#164971", color: "#bfe6ff",
     display: "flex", alignItems: "center", justifyContent: "center",
     cursor: "pointer", zIndex: "999999",
     borderRadius: "6px 0 0 6px", fontSize: "11px",
@@ -319,11 +352,14 @@ if (!document.getElementById("sidekick-panel")) {
     syncDot.className = "sk-sync-dot";
     syncDot.title = "Synced across tabs";
 
-    const exploreBtn = iconBtn("⊞", "Browse notebooks");
+    const labelsBtn = svgIconBtn("tag", "Edit labels");
+    labelsBtn.addEventListener("click", e => { e.stopPropagation(); openLabelPopover(nb, labelsBtn); });
+
+    const exploreBtn = svgIconBtn("grid", "Browse notebooks");
     exploreBtn.addEventListener("click", () => renderView("explore"));
 
     const binCount = (d.recycleBin || []).length;
-    const binBtn = iconBtn("🗑", `Recycle bin${binCount ? " (" + binCount + ")" : ""}`);
+    const binBtn = svgIconBtn("trash", `Recycle bin${binCount ? " (" + binCount + ")" : ""}`);
     if (binCount) {
       binBtn.style.position = "relative";
       const dot = mk("span");
@@ -332,37 +368,30 @@ if (!document.getElementById("sidekick-panel")) {
     }
     binBtn.addEventListener("click", () => renderView("bin"));
 
-    row1.append(nbName, syncDot, exploreBtn, binBtn);
+    row1.append(nbName, syncDot, labelsBtn, exploreBtn, binBtn);
 
     const row2 = document.createElement("div");
     row2.className = "sk-action-row";
 
     const capBtn = mk("button", "sk-btn primary");
+    capBtn.title = "Capture (Alt+Shift+C)";
     capBtn.innerHTML = "";
-    capBtn.append(svgIcon("camera"), " Capture");
+    // capBtn.append(svgIcon("camera"), " Capture");
+    capBtn.append(svgIcon("camera"));
     capBtn.addEventListener("click", startCapture);
 
     const saveBtn = mk("button", "sk-btn");
+    saveBtn.title = "Save (Ctrl+S)";
     saveBtn.innerHTML = "";
-    saveBtn.append(svgIcon("save"), " Save");
-    saveBtn.addEventListener("click", () => {
-      if (!contextOk()) {
-        saveBtn.textContent = "⚠ Reload tab";
-        setTimeout(() => { saveBtn.innerHTML = "";
-        saveBtn.append(svgIcon("save"), " Save"); }, 2000);
-        return;
-      }
-      chrome.storage.local.set({ [STORAGE_KEY]: getData() }, () => {
-        if (chrome.runtime.lastError) { console.error(chrome.runtime.lastError); return; }
-        saveBtn.textContent = "✓ Saved!";
-        setTimeout(() => { saveBtn.innerHTML = "";
-        saveBtn.append(svgIcon("save"), " Save"); }, 1400);
-      });
-    });
+    saveBtn.append(svgIcon("save"));
+    saveBtn.addEventListener("click", () => performSave());
+    saveBtnEl = saveBtn;
 
     const dlWrap = mk("div"); dlWrap.style.position = "relative";
     const dlBtn = mk("button", "sk-btn"); dlBtn.innerHTML = "";
-    dlBtn.append(svgIcon("download"), " Download ▾");
+    dlBtn.title = "Download (Alt+Shift+D for .txt)";
+    // dlBtn.append(svgIcon("download"), " Download ▾");
+    dlBtn.append(svgIcon("download"), " ▾");
     const dlDrop = mk("div", "sk-dropdown");
     dlDrop.style.display = "none";
 
@@ -376,30 +405,105 @@ if (!document.getElementById("sidekick-panel")) {
     document.addEventListener("click", () => { dlDrop.style.display = "none"; }, { once: false });
     dlWrap.append(dlBtn, dlDrop);
 
+    const row3 = document.createElement("div");
+    row3.className = "sk-action-row";
+    row3.style.marginTop = "8px";
+    const searchWrap = mk("div"); searchWrap.style.cssText = "position:relative;flex:1;";
+    const searchInput = mk("input", "sk-input");
+    searchInput.type = "search";
+    searchInput.placeholder = "Search notes…";
+    searchInput.value = noteSearchQuery;
+    searchInput.style.paddingLeft = "30px";
+    const searchIconEl = svgIcon("search");
+    searchIconEl.style.cssText = "position:absolute;left:8px;top:50%;transform:translateY(-50%);color:#5b7a90;pointer-events:none;";
+    searchInput.addEventListener("input", () => {
+      noteSearchQuery = searchInput.value;
+      renderNotesBody(nb);
+    });
+    searchWrap.append(searchIconEl, searchInput);
+    row3.appendChild(searchWrap);
+
     row2.append(capBtn, saveBtn, dlWrap);
-    hdr.append(row1, row2);
+    hdr.append(row1, row2, row3);
     headerSlot.appendChild(hdr);
 
-    const notes = d.capturedItems.filter(n => n.notebookId === nb.id);
-    if (!notes.length) {
+    renderNotesBody(nb);
+  }
+
+  function renderNotesBody(nb) {
+    const d = getData();
+    bodySlot.innerHTML = "";
+
+    const allNotes = d.capturedItems.filter(n => n.notebookId === nb.id);
+    if (!allNotes.length) {
       const empty = mk("div", "sk-empty");
       empty.innerHTML = "No notes yet.<br>Click <b>Capture</b> to start.";
       bodySlot.appendChild(empty);
       return;
     }
 
+    const q = noteSearchQuery.trim().toLowerCase();
+    const notes = q
+      ? allNotes.filter(n => (n.content || "").toLowerCase().includes(q) || n.type.toLowerCase().includes(q))
+      : allNotes;
+
+    if (!notes.length) {
+      const empty = mk("div", "sk-empty");
+      empty.textContent = `No notes match "${noteSearchQuery}".`;
+      bodySlot.appendChild(empty);
+      return;
+    }
+
     const lbl = mk("span", "sk-section-lbl");
-    lbl.textContent = `${notes.length} note${notes.length !== 1 ? "s" : ""}`;
+    lbl.textContent = q
+      ? `${notes.length} of ${allNotes.length} note${allNotes.length !== 1 ? "s" : ""}`
+      : `${notes.length} note${notes.length !== 1 ? "s" : ""}`;
     bodySlot.appendChild(lbl);
 
-    // Most recent first, then float pinned notes to the top (stable sort
-    // preserves recency order within each group).
-    const ordered = notes.slice().reverse().sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
-    ordered.forEach(note => bodySlot.appendChild(noteCard(note, nb)));
+    const canDrag = !q; // reordering only makes sense against the full, unfiltered list
+    const ordered = notes.slice().sort((a, b) => {
+      const pinDiff = (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0);
+      if (pinDiff !== 0) return pinDiff;
+      return noteOrderValue(a) - noteOrderValue(b);
+    });
+    ordered.forEach(note => bodySlot.appendChild(noteCard(note, nb, canDrag)));
   }
 
-  function noteCard(note, nb) {
+  function noteOrderValue(n) {
+    return typeof n.order === "number" ? n.order : -new Date(n.capturedAt).getTime();
+  }
+
+  function highlightText(el, text, query) {
+    text = text == null ? "" : String(text);
+    el.textContent = "";
+    const q = (query || "").trim();
+    if (!q) { el.textContent = text; return; }
+    const escQ = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`(${escQ})`, "gi");
+    let lastIndex = 0, match;
+    while ((match = re.exec(text)) !== null) {
+      if (match.index > lastIndex) el.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+      const mark = mk("mark", "sk-highlight");
+      mark.textContent = match[0];
+      el.appendChild(mark);
+      lastIndex = match.index + match[0].length;
+      if (match[0].length === 0) re.lastIndex++;
+    }
+    if (lastIndex < text.length) el.appendChild(document.createTextNode(text.slice(lastIndex)));
+  }
+
+  function noteCard(note, nb, canDrag) {
     const card = mk("div", "sk-note-card" + (note.pinned ? " pinned" : ""));
+    card.dataset.noteId = note.id;
+    card.dataset.pinned = String(!!note.pinned);
+
+    const handle = mk("div", "sk-drag-handle" + (canDrag ? "" : " disabled"));
+    handle.title = canDrag ? "Drag to reorder" : "Clear search to reorder";
+    handle.appendChild(svgIcon("grip"));
+    if (canDrag) {
+      handle.addEventListener("pointerdown", e => startNoteDrag(e, card, note, nb));
+    }
+    card.appendChild(handle);
 
     const top = mk("div"); Object.assign(top.style, { display: "flex", alignItems: "center", gap: "6px", marginBottom: "6px", paddingRight: "58px" });
     if (note.pinned) {
@@ -408,7 +512,7 @@ if (!document.getElementById("sidekick-panel")) {
       top.appendChild(pinBadge);
     }
     const tag = mk("span", `sk-tag ${note.type}`); tag.textContent = note.type;
-    const ts = mk("span"); Object.assign(ts.style, { fontSize: "11px", color: "#8a8c6a", flex: "1" });
+    const ts = mk("span"); Object.assign(ts.style, { fontSize: "11px", color: "#5b7a90", flex: "1" });
     ts.textContent = new Date(note.capturedAt).toLocaleString();
     top.append(tag, ts);
 
@@ -454,7 +558,7 @@ if (!document.getElementById("sidekick-panel")) {
     delBtn.addEventListener("click", () => { deleteNote(note, nb); });
     card.appendChild(delBtn);
 
-    const body = mk("div"); Object.assign(body.style, { fontSize: "13px", color: "#2e2e1f", marginBottom: "6px", lineHeight: "1.5" });
+    const body = mk("div"); Object.assign(body.style, { fontSize: "13px", color: "#1e293b", marginBottom: "6px", lineHeight: "1.5" });
 
     if (note.type === "image") {
       const img = mk("img"); img.src = note.content;
@@ -481,7 +585,7 @@ if (!document.getElementById("sidekick-panel")) {
       } else {
         console.log("[Sidekick] No thumbnail available, rendering fallback pill for:", watchUrl);
         const pill = mk("div");
-        pill.style.cssText = "background:#f5f0c0;color:#5c4a0a;border-radius:6px;padding:10px 12px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:8px;border:1px solid #c8cda8;";
+        pill.style.cssText = "background:#eaf6fd;color:#14587d;border-radius:6px;padding:10px 12px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:8px;border:1px solid #bfe0fa;";
         const short = watchUrl.slice(0, 60) + (watchUrl.length > 60 ? "\u2026" : "");
         pill.innerHTML = `<span style="font-size:20px">\ud83c\udfa6</span><span>${esc(short)}</span>`;
         wrap.appendChild(pill);
@@ -492,7 +596,7 @@ if (!document.getElementById("sidekick-panel")) {
       const full = note.content || "";
       const isLong = full.length > 180;
       const textSpan = mk("span");
-      textSpan.textContent = isLong ? full.slice(0, 180) + "…" : full;
+      highlightText(textSpan, isLong ? full.slice(0, 180) + "…" : full, noteSearchQuery);
       body.appendChild(textSpan);
 
       if (isLong) {
@@ -501,7 +605,7 @@ if (!document.getElementById("sidekick-panel")) {
         let expanded = false;
         readMore.addEventListener("click", () => {
           expanded = !expanded;
-          textSpan.textContent = expanded ? full : full.slice(0, 180) + "…";
+          highlightText(textSpan, expanded ? full : full.slice(0, 180) + "…", noteSearchQuery);
           readMore.textContent = expanded ? "Read less" : "Read more";
         });
         body.appendChild(mk("br"));
@@ -510,13 +614,64 @@ if (!document.getElementById("sidekick-panel")) {
     }
 
     const src = mk("a"); src.href = note.sourceUrl; src.target = "_blank"; src.rel = "noopener noreferrer";
-    Object.assign(src.style, { fontSize: "11px", color: "#8a8c6a", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: "none" });
+    Object.assign(src.style, { fontSize: "11px", color: "#5b7a90", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: "none" });
     src.textContent = note.sourceUrl;
     src.onmouseover = () => src.style.textDecoration = "underline";
     src.onmouseout = () => src.style.textDecoration = "none";
 
     card.append(top, body, src);
     return card;
+  }
+
+  function startNoteDrag(e, card, note, nb) {
+    e.preventDefault();
+    const pinnedGroup = !!note.pinned;
+    const container = bodySlot;
+    const allCards = [...container.querySelectorAll(".sk-note-card")];
+    const groupCards = allCards.filter(c => c !== card && c.dataset.pinned === String(pinnedGroup));
+    const firstOtherIdx = allCards.findIndex(c => c.dataset.pinned !== String(pinnedGroup));
+    const boundaryEl = firstOtherIdx !== -1 ? allCards[firstOtherIdx] : null;
+
+    card.classList.add("sk-dragging");
+    try { card.setPointerCapture(e.pointerId); } catch (_) {}
+
+    const onMove = ev => {
+      const y = ev.clientY;
+      let referenceCard = null;
+      for (const c of groupCards) {
+        const r = c.getBoundingClientRect();
+        if (y < r.top + r.height / 2) { referenceCard = c; break; }
+      }
+      if (referenceCard) {
+        if (referenceCard !== card.nextSibling) container.insertBefore(card, referenceCard);
+      } else if (boundaryEl) {
+        if (boundaryEl !== card.nextSibling) container.insertBefore(card, boundaryEl);
+      } else if (container.lastElementChild !== card) {
+        container.appendChild(card);
+      }
+    };
+
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      try { card.releasePointerCapture(e.pointerId); } catch (_) {}
+      card.classList.remove("sk-dragging");
+      commitNoteOrder(nb);
+    };
+
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp, { once: true });
+  }
+
+  function commitNoteOrder(nb) {
+    const d = getData();
+    const cardEls = [...bodySlot.querySelectorAll(".sk-note-card")];
+    cardEls.forEach((c, idx) => {
+      const note = d.capturedItems.find(n => n.id === c.dataset.noteId);
+      if (note) note.order = idx * 10;
+    });
+    setData(d);
+    renderNotesBody(nb);
   }
 
   function toggleNotePin(note) {
@@ -582,17 +737,92 @@ if (!document.getElementById("sidekick-panel")) {
     input.addEventListener("keydown", e => { if (e.key === "Enter") input.blur(); if (e.key === "Escape") renderView("main"); });
   }
 
+  function openLabelPopover(nb, anchorEl) {
+    document.querySelectorAll(".sk-label-popover").forEach(p => p.remove());
+
+    const pop = mk("div", "sk-label-popover");
+    const title = mk("div");
+    title.style.cssText = "font-size:11px;font-weight:700;color:#5b7a90;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;";
+    title.textContent = "Labels";
+
+    const input = mk("input", "sk-input");
+    input.placeholder = "e.g. Work, Research";
+    input.value = (nb.labels || []).join(", ");
+
+    const hint = mk("div");
+    hint.style.cssText = "font-size:11px;color:#5b7a90;margin-top:6px;";
+    hint.textContent = "Comma-separated · Enter to save · Esc to cancel";
+
+    let committed = false;
+    const commit = () => {
+      if (committed) return;
+      committed = true;
+      const labels = [...new Set(input.value.split(",").map(s => s.trim()).filter(Boolean))];
+      const d = getData();
+      const t = d.notebooks.find(n => n.id === nb.id);
+      if (t) { t.labels = labels; setData(d); }
+      pop.remove();
+      document.removeEventListener("mousedown", outsideClick, true);
+      if (currentView === "main" || currentView === "explore") renderView(currentView);
+    };
+    const cancel = () => {
+      committed = true;
+      pop.remove();
+      document.removeEventListener("mousedown", outsideClick, true);
+    };
+
+    input.addEventListener("keydown", e => {
+      if (e.key === "Enter") { e.preventDefault(); commit(); }
+      if (e.key === "Escape") { e.preventDefault(); cancel(); }
+    });
+
+    function outsideClick(ev) {
+      if (!pop.contains(ev.target)) commit();
+    }
+
+    pop.append(title, input, hint);
+    document.body.appendChild(pop);
+
+    const r = anchorEl.getBoundingClientRect();
+    const popW = 230;
+    let right = window.innerWidth - r.right;
+    right = Math.max(8, Math.min(right, window.innerWidth - popW - 8));
+    pop.style.top = (r.bottom + 4) + "px";
+    pop.style.right = right + "px";
+    pop.style.left = "auto";
+
+    input.focus(); input.select();
+    setTimeout(() => document.addEventListener("mousedown", outsideClick, true), 0);
+  }
+
   function renderExplore() {
     const d = getData();
 
     const hdr = mk("div", "sk-header");
     const row = mk("div", "sk-header-row");
-    const back = iconBtn("←", "Back"); back.addEventListener("click", () => renderView("main"));
+    const back = svgIconBtn("back", "Back"); back.addEventListener("click", () => renderView("main"));
     const title = mk("div", "sk-view-title"); title.textContent = "Notebooks";
     const addBtn = mk("button", "sk-btn primary"); addBtn.textContent = "＋ New";
     addBtn.addEventListener("click", createNotebook);
     row.append(back, title, addBtn);
-    hdr.appendChild(row);
+
+    const searchRow = mk("div", "sk-action-row"); searchRow.style.marginTop = "8px";
+    const searchWrap = mk("div"); searchWrap.style.cssText = "position:relative;flex:1;";
+    const searchInput = mk("input", "sk-input");
+    searchInput.type = "search";
+    searchInput.placeholder = "Search notebooks…";
+    searchInput.value = notebookSearchQuery;
+    searchInput.style.paddingLeft = "30px";
+    const searchIconEl = svgIcon("search");
+    searchIconEl.style.cssText = "position:absolute;left:8px;top:50%;transform:translateY(-50%);color:#5b7a90;pointer-events:none;";
+    searchInput.addEventListener("input", () => {
+      notebookSearchQuery = searchInput.value;
+      renderNotebooksList();
+    });
+    searchWrap.append(searchIconEl, searchInput);
+    searchRow.appendChild(searchWrap);
+
+    hdr.append(row, searchRow);
     headerSlot.appendChild(hdr);
 
     if (!d.notebooks.length) {
@@ -600,41 +830,126 @@ if (!document.getElementById("sidekick-panel")) {
       return;
     }
 
-    d.notebooks.forEach(nb => {
-      const cnt = d.capturedItems.filter(n => n.notebookId === nb.id).length;
-      const card = mk("div", "sk-nb-card" + (nb.id === d.activeNotebookId ? " active" : ""));
+    renderNotebooksList();
+  }
 
-      const left = mk("div"); Object.assign(left.style, { display: "flex", alignItems: "center", gap: "10px", flex: "1", minWidth: "0" });
-      const ico = mk("span"); ico.textContent = "📓"; ico.style.fontSize = "18px";
-      const info = mk("div"); info.style.cssText = "flex:1;min-width:0;";
-      const name = mk("div"); Object.assign(name.style, { fontSize: "14px", fontWeight: "600", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#2e2e1f" });
-      name.textContent = nb.name;
-      const meta = mk("div"); meta.style.cssText = "font-size:11px;color:#8a8c6a;margin-top:2px;";
-      meta.textContent = `${cnt} note${cnt !== 1 ? "s" : ""} · ${new Date(nb.createdAt).toLocaleDateString()}`;
-      info.append(name, meta);
-      left.append(ico, info);
+  function buildNbCard(nb, d) {
+    const cnt = d.capturedItems.filter(n => n.notebookId === nb.id).length;
+    const card = mk("div", "sk-nb-card" + (nb.id === d.activeNotebookId ? " active" : ""));
 
-      const right = mk("div"); right.style.cssText = "display:flex;align-items:center;gap:4px;flex-shrink:0;";
-      if (nb.id === d.activeNotebookId) {
-        const pill = mk("span"); pill.style.cssText = "font-size:11px;color:#484f28;font-weight:600;padding:2px 8px;background:#d1ffbd;border-radius:10px;border:1px solid #8fbd6a;";
-        pill.textContent = "Active"; right.appendChild(pill);
-      }
-      const del = iconBtn("🗑", "Delete"); del.style.fontSize = "13px";
-      del.addEventListener("click", e => { e.stopPropagation(); deleteNotebook(nb); });
-      right.appendChild(del);
+    const left = mk("div"); Object.assign(left.style, { display: "flex", alignItems: "center", gap: "10px", flex: "1", minWidth: "0" });
+    const ico = mk("span"); ico.appendChild(svgIcon("notebook")); ico.style.fontSize = "18px";
+    const info = mk("div"); info.style.cssText = "flex:1;min-width:0;";
+    const name = mk("div"); Object.assign(name.style, { fontSize: "14px", fontWeight: "600", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#1e293b" });
+    highlightText(name, nb.name, notebookSearchQuery);
+    const meta = mk("div"); meta.style.cssText = "font-size:11px;color:#5b7a90;margin-top:2px;";
+    meta.textContent = `${cnt} note${cnt !== 1 ? "s" : ""} · ${new Date(nb.createdAt).toLocaleDateString()}`;
+    info.append(name, meta);
 
-      card.append(left, right);
-      card.addEventListener("click", () => {
-        const d2 = getData(); d2.activeNotebookId = nb.id; setData(d2);
-        renderView("main");
+    if ((nb.labels || []).length) {
+      const chipRow = mk("div");
+      chipRow.style.cssText = "margin-top:4px;";
+      nb.labels.forEach(l => {
+        const chip = mk("span", "sk-label-chip");
+        chip.textContent = l;
+        chipRow.appendChild(chip);
       });
-      bodySlot.appendChild(card);
+      info.appendChild(chipRow);
+    }
+
+    left.append(ico, info);
+
+    const right = mk("div"); right.style.cssText = "display:flex;align-items:center;gap:4px;flex-shrink:0;";
+    if (nb.id === d.activeNotebookId) {
+      const pill = mk("span"); pill.style.cssText = "font-size:11px;color:#164971;font-weight:600;padding:2px 8px;background:#cfeeff;border-radius:10px;border:1px solid #7ec4ea;";
+      pill.textContent = "Active"; right.appendChild(pill);
+    }
+    const del = svgIconBtn("trash", "Delete");
+    del.addEventListener("click", e => { e.stopPropagation(); deleteNotebook(nb); });
+    right.appendChild(del);
+
+    card.append(left, right);
+    card.addEventListener("click", () => {
+      const d2 = getData(); d2.activeNotebookId = nb.id; setData(d2);
+      noteSearchQuery = "";
+      renderView("main");
     });
+
+    card.addEventListener("contextmenu", e => {
+      e.preventDefault();
+      document.querySelectorAll(".sk-dropdown").forEach(dd => dd.remove());
+      document.querySelectorAll(".sk-label-popover").forEach(p => p.remove());
+
+      const menu = mk("div", "sk-dropdown");
+      Object.assign(menu.style, { position: "fixed", top: e.clientY + "px", left: e.clientX + "px", display: "block" });
+
+      const editLabelsItem = mk("div", "sk-dd-item");
+      const lblText = mk("span"); lblText.textContent = "Edit Labels";
+      editLabelsItem.append(svgIcon("tag"), lblText);
+      editLabelsItem.addEventListener("click", ev => {
+        ev.stopPropagation();
+        menu.remove();
+        openLabelPopover(nb, card);
+      });
+
+      menu.appendChild(editLabelsItem);
+      document.body.appendChild(menu);
+
+      const closeMenu = ev => {
+        if (!menu.contains(ev.target)) {
+          menu.remove();
+          document.removeEventListener("mousedown", closeMenu, true);
+        }
+      };
+      setTimeout(() => document.addEventListener("mousedown", closeMenu, true), 0);
+    });
+
+    return card;
+  }
+
+  function renderNotebooksList() {
+    const d = getData();
+    bodySlot.innerHTML = "";
+
+    const q = notebookSearchQuery.trim().toLowerCase();
+    const list = q ? d.notebooks.filter(nb => nb.name.toLowerCase().includes(q)) : d.notebooks;
+
+    if (!list.length) {
+      bodySlot.innerHTML = `<div class="sk-empty">No notebooks match "${esc(notebookSearchQuery)}".</div>`;
+      return;
+    }
+
+    const groups = new Map();
+    const unlabeled = [];
+    list.forEach(nb => {
+      const labels = nb.labels || [];
+      if (!labels.length) { unlabeled.push(nb); return; }
+      labels.forEach(l => {
+        if (!groups.has(l)) groups.set(l, []);
+        groups.get(l).push(nb);
+      });
+    });
+
+    const sortedLabels = [...groups.keys()].sort((a, b) => a.localeCompare(b));
+
+    sortedLabels.forEach(lblName => {
+      const hdr = mk("div", "sk-label-group-hdr");
+      hdr.append(svgIcon("tag"), document.createTextNode(" " + lblName));
+      bodySlot.appendChild(hdr);
+      groups.get(lblName).forEach(nb => bodySlot.appendChild(buildNbCard(nb, d)));
+    });
+
+    if (unlabeled.length) {
+      const hdr = mk("div", "sk-label-group-hdr");
+      hdr.textContent = "Unlabeled";
+      bodySlot.appendChild(hdr);
+      unlabeled.forEach(nb => bodySlot.appendChild(buildNbCard(nb, d)));
+    }
   }
 
   function createNotebook() {
     const d = getData();
-    const nb = { id: uid(), name: "New Notebook", createdAt: now() };
+    const nb = { id: uid(), name: "New Notebook", createdAt: now(), labels: [] };
     d.notebooks.push(nb); d.activeNotebookId = nb.id; setData(d);
     renderView("main");
     setTimeout(() => {
@@ -648,8 +963,8 @@ if (!document.getElementById("sidekick-panel")) {
 
     const hdr = mk("div", "sk-header");
     const row = mk("div", "sk-header-row");
-    const back = iconBtn("←", "Back"); back.addEventListener("click", () => renderView("main"));
-    const title = mk("div", "sk-view-title"); title.textContent = "🗑 Recycle Bin";
+    const back = svgIconBtn("back", "Back"); back.addEventListener("click", () => renderView("main"));
+    const title = mk("div", "sk-view-title"); title.append(svgIcon("trash"), document.createTextNode(" Recycle Bin"));
     row.append(back, title);
     hdr.appendChild(row);
     headerSlot.appendChild(hdr);
@@ -660,7 +975,7 @@ if (!document.getElementById("sidekick-panel")) {
       return;
     }
 
-    const info = mk("p"); info.style.cssText = "font-size:12px;color:#8a8c6a;margin-bottom:12px;";
+    const info = mk("p"); info.style.cssText = "font-size:12px;color:#5b7a90;margin-bottom:12px;";
     info.textContent = "Items are permanently deleted after 30 days.";
     bodySlot.appendChild(info);
 
@@ -684,11 +999,12 @@ if (!document.getElementById("sidekick-panel")) {
     const top = mk("div"); Object.assign(top.style, { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "8px" });
 
     const info = mk("div"); info.style.flex = "1";
-    const name = mk("div"); name.style.cssText = "font-size:13px;font-weight:600;color:#2e2e1f;";
+    const name = mk("div"); name.style.cssText = "font-size:13px;font-weight:600;color:#1e293b;";
     const meta = mk("div"); meta.className = "sk-bin-meta";
 
     if (entry.type === "notebook") {
-      name.textContent = "📓 " + entry.notebook.name;
+      name.appendChild(svgIcon("notebook"));
+      name.append(" " + entry.notebook.name);
       const cnt = (entry.notes || []).length;
       meta.textContent = `${cnt} note${cnt !== 1 ? "s" : ""} · `;
       meta.appendChild(daysLeft(entry.deletedAt));
@@ -754,7 +1070,7 @@ if (!document.getElementById("sidekick-panel")) {
     d.recycleBin.push({ id: uid(), type: "notebook", notebook: nb, notes, deletedAt: now() });
     if (d.activeNotebookId === nb.id) d.activeNotebookId = d.notebooks[0]?.id || null;
     if (!d.notebooks.length) {
-      const newNb = { id: uid(), name: "My Notebook", createdAt: now() };
+      const newNb = { id: uid(), name: "My Notebook", createdAt: now(), labels: [] };
       d.notebooks.push(newNb); d.activeNotebookId = newNb.id;
     }
     setData(d);
@@ -807,6 +1123,82 @@ if (!document.getElementById("sidekick-panel")) {
     return item;
   }
 
+  let saveBtnEl = null;
+
+  function flashButton(btn, text, ms) {
+    if (!btn) return;
+    btn.textContent = text;
+    setTimeout(() => {
+      btn.innerHTML = "";
+      btn.appendChild(svgIcon("save"));
+    }, ms);
+  }
+
+  function performSave() {
+    if (!contextOk()) {
+      flashButton(saveBtnEl, "⚠ Reload tab", 2000);
+      return;
+    }
+    chrome.storage.local.set({ [STORAGE_KEY]: getData() }, () => {
+      if (chrome.runtime.lastError) { console.error(chrome.runtime.lastError); return; }
+      flashButton(saveBtnEl, "✓ Saved!", 1400);
+    });
+  }
+
+  // ── KEYBOARD SHORTCUTS ──────────────────────────────────────────────────
+  // Capture: Alt+Shift+C   Download (.txt): Alt+Shift+D
+  // Save: Ctrl/Cmd+S   Undo: Ctrl/Cmd+Z   Redo: Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z
+  // Save/Undo/Redo only act while the panel is open, and none of these fire
+  // while focus is in an editable field (so normal typing/undo is untouched).
+  document.addEventListener("keydown", e => {
+    const ae = document.activeElement;
+    const isEditable = ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable);
+    if (isEditable) return;
+
+    const mod = e.ctrlKey || e.metaKey;
+    const key = e.key.toLowerCase();
+
+    if (e.altKey && e.shiftKey && !mod && key === "c") {
+      e.preventDefault();
+      startCapture();
+      return;
+    }
+    if (e.altKey && e.shiftKey && !mod && key === "d") {
+      e.preventDefault();
+      const d = getData();
+      const nb = d.notebooks.find(n => n.id === d.activeNotebookId) || d.notebooks[0];
+      if (nb) downloadNotebook(nb, "txt");
+      return;
+    }
+
+    // Complete/done a capture from the quick-access bar (Alt+Enter or Shift+Enter),
+    // available whenever the "captured" row is showing — including with the panel closed.
+    if (!mod && key === "enter" && (e.altKey || e.shiftKey) && captureBarMode === "captured") {
+      e.preventDefault();
+      hideBar();
+      openPanel();
+      return;
+    }
+
+    if (!isOpen) return;
+
+    if (mod && !e.altKey && !e.shiftKey && key === "s") {
+      e.preventDefault();
+      performSave();
+      return;
+    }
+    if (mod && !e.altKey && !e.shiftKey && key === "z") {
+      e.preventDefault();
+      undoLastCapture();
+      return;
+    }
+    if (mod && !e.altKey && ((key === "y" && !e.shiftKey) || (key === "z" && e.shiftKey))) {
+      e.preventDefault();
+      redoLastCapture();
+      return;
+    }
+  }, true);
+
   function downloadNotebook(nb, fmt) {
     const d = getData();
     const notes = d.capturedItems.filter(n => n.notebookId === nb.id);
@@ -819,21 +1211,21 @@ if (!document.getElementById("sidekick-panel")) {
       triggerDL(new Blob([txt], { type: "text/plain" }), nb.name + ".txt");
     } else {
       let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(nb.name)}</title>
-<style>body{font-family:Arial,sans-serif;max-width:700px;margin:40px auto;color:#2e2e1f}
-h1{font-size:22px;border-bottom:2px solid #5a6132;padding-bottom:8px}
-.note{border:1px solid #c8cda8;border-radius:8px;padding:14px;margin-bottom:16px;background:#fafff5}
+<style>body{font-family:Arial,sans-serif;max-width:700px;margin:40px auto;color:#1e293b}
+h1{font-size:22px;border-bottom:2px solid #2f8fcf;padding-bottom:8px}
+.note{border:1px solid #bfe0fa;border-radius:8px;padding:14px;margin-bottom:16px;background:#ffffff}
 .tag{display:inline-block;font-size:11px;font-weight:700;padding:2px 6px;border-radius:3px;text-transform:uppercase;margin-bottom:6px}
-.text{background:#e8f5d0;color:#2e3d0a}.image{background:#d1fae5;color:#065f46}
-.video{background:#fce7f3;color:#9d174d}.iframe{background:#f5f0c0;color:#5c4a0a}
-.meta{font-size:12px;color:#8a8c6a;margin-bottom:6px}.content{font-size:14px;line-height:1.6;word-break:break-word}
-img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8px}a{color:#5a6132}
+.text{background:#dceefc;color:#0c4a6e}.image{background:#cfe8fb;color:#0a4a75}
+.video{background:#b3daf7;color:#08395c}.iframe{background:#eaf6fd;color:#14587d}
+.meta{font-size:12px;color:#5b7a90;margin-bottom:6px}.content{font-size:14px;line-height:1.6;word-break:break-word}
+img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8px}a{color:#2f8fcf}
 </style></head><body><h1>📓 ${esc(nb.name)}</h1>
-<p style="color:#8a8c6a;font-size:13px">Exported ${new Date().toLocaleString()} · ${notes.length} note${notes.length!==1?"s":""}</p>`;
+<p style="color:#5b7a90;font-size:13px">Exported ${new Date().toLocaleString()} · ${notes.length} note${notes.length!==1?"s":""}</p>`;
       notes.forEach((n, i) => {
         html += `<div class="note"><span class="tag ${n.type}">${n.type}</span>
 <div class="meta">#${i+1} · ${new Date(n.capturedAt).toLocaleString()}</div>
 <div class="content">${n.type==="image"?`<img src="${esc(n.content)}" alt="captured image">`:esc(n.content)}</div>
-<div style="margin-top:8px;font-size:11px;color:#8a8c6a">Source: <a href="${esc(n.sourceUrl)}" target="_blank">${esc(n.sourceUrl)}</a></div></div>`;
+<div style="margin-top:8px;font-size:11px;color:#5b7a90">Source: <a href="${esc(n.sourceUrl)}" target="_blank">${esc(n.sourceUrl)}</a></div></div>`;
       });
       html += "</body></html>";
       triggerDL(new Blob([html], { type: "application/vnd.ms-word" }), nb.name + ".doc");
@@ -852,7 +1244,7 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
   captureBar.id = "sidekick-capture-bar";
   Object.assign(captureBar.style, {
     position: "fixed", bottom: "0", left: "0", right: "0", height: "54px",
-    background: "#2e2e1f", color: "#d1ffbd",
+    background: "#1e293b", color: "#bfe6ff",
     boxShadow: "0 -2px 16px rgba(46,46,31,0.35)",
     display: "none",
     alignItems: "center", justifyContent: "space-between",
@@ -863,19 +1255,20 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
 
   function cbBtn(txt, bg) {
     const b = mk("button");
-    Object.assign(b.style, { padding: "5px 12px", cursor: "pointer", fontSize: "12px", background: bg || "#3d5228", color: "#d1ffbd", border: "1px solid rgba(209,255,189,0.2)", borderRadius: "5px", marginLeft: "7px", whiteSpace: "nowrap" });
+    Object.assign(b.style, { padding: "5px 12px", cursor: "pointer", fontSize: "12px", background: bg || "#164971", color: "#bfe6ff", border: "1px solid rgba(126,196,234,0.3)", borderRadius: "5px", marginLeft: "7px", whiteSpace: "nowrap" });
     b.textContent = txt; return b;
   }
   function cbl(html, color) {
-    const s = mk("span"); s.style.color = color || "#8fbd6a"; s.innerHTML = html; return s;
+    const s = mk("span"); s.style.color = color || "#8fc4de"; s.innerHTML = html; return s;
   }
 
   function showBarArmed() {
+    captureBarMode = "armed";
     captureBar.style.display = "flex"; captureBar.innerHTML = "";
     const L = row();
-    L.append(svgIcon("camera", "margin-right:6px"), cbl(" Capture mode — click an element or select text", "#d1ffbd"));
+    L.append(svgIcon("camera", "margin-right:6px"), cbl(" Capture mode — click an element or select text", "#bfe6ff"));
     const R = row();
-    R.append(cbl("Esc to cancel", "#8fbd6a"));
+    R.append(cbl("Esc to cancel", "#8fc4de"));
     const c = cbBtn("✕");
     c.addEventListener("click", () => { disableCaptureMode(); hideBar(); });
     R.appendChild(c);
@@ -883,12 +1276,13 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
   }
 
   function showBarCaptured(item) {
+    captureBarMode = "captured";
     captureBar.style.display = "flex"; captureBar.innerHTML = "";
-    const colors = { text:"#5a6132", image:"#4a6632", video:"#7a5a1e", iframe:"#6a5228" };
+    const colors = { text:"#2f8fcf", image:"#0d5c8c", video:"#1479b0", iframe:"#0a4a75" };
     const L = row(); L.style.gap = "8px"; L.style.overflow = "hidden";
-    const tag = mk("span"); tag.style.cssText = `background:${colors[item.type]||"#5a6132"};color:#d1ffbd;font-weight:700;font-size:10px;padding:2px 7px;border-radius:3px;text-transform:uppercase;flex-shrink:0;`;
+    const tag = mk("span"); tag.style.cssText = `background:${colors[item.type]||"#2f8fcf"};color:#ffffff;font-weight:700;font-size:10px;padding:2px 7px;border-radius:3px;text-transform:uppercase;flex-shrink:0;`;
     tag.textContent = item.type;
-    const prev = mk("span"); Object.assign(prev.style, { color:"#d1ffbd", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"340px" });
+    const prev = mk("span"); Object.assign(prev.style, { color:"#bfe6ff", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"340px" });
     if (item.type==="image") {
       const th = mk("img"); Object.assign(th.style, { height:"26px", width:"26px", objectFit:"cover", borderRadius:"3px", verticalAlign:"middle", marginRight:"5px" }); th.src = item.content;
       prev.appendChild(th); prev.append(item.content.split("/").pop().slice(0,40));
@@ -903,13 +1297,14 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
     const R = row();
     const u = cbBtn("↩"); u.addEventListener("click", () => { undoLastCapture(); showBarUndone(); }); R.appendChild(u);
     const m = cbBtn("＋"); m.addEventListener("click", () => { showBarArmed(); enableCaptureMode(); }); R.appendChild(m);
-    const d2 = cbBtn("✓"); d2.addEventListener("click", () => { hideBar(); openPanel(); }); R.appendChild(d2);
+    const d2 = cbBtn("✓"); d2.title = "Done (Alt+Enter / Shift+Enter)"; d2.addEventListener("click", () => { hideBar(); openPanel(); }); R.appendChild(d2);
     captureBar.append(L, R);
   }
 
   function showBarUndone() {
+    captureBarMode = "undone";
     captureBar.style.display = "flex"; captureBar.innerHTML = "";
-    const L = row(); L.append(cbl("↩ Note moved to Recycle Bin", "#f5f0c0"));
+    const L = row(); L.append(cbl("↩ Note moved to Recycle Bin", "#eaf6fd"));
     const R = row();
     const re = cbBtn("⟳"); re.addEventListener("click", () => { const it = redoLastCapture(); if(it) showBarCaptured(it); }); R.appendChild(re);
     const m = cbBtn("＋"); m.addEventListener("click", () => { showBarArmed(); enableCaptureMode(); }); R.appendChild(m);
@@ -918,7 +1313,9 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
   }
 
   function hideBar() {
+    captureBarMode = "hidden";
     captureBar.style.display = "none"; captureBar.innerHTML = "";
+    clearSelection();
     if (currentView === "main") renderView("main");
   }
 
@@ -927,6 +1324,7 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
     if (sel) {
       console.log("[Sidekick] startCapture: capturing selected text, length:", sel.length);
       const item = saveCapturedData({ type:"text", content:sel }); lastSelectedText = "";
+      clearSelection();
       showBarCaptured(item); closePanel(); return;
     }
     console.log("[Sidekick] startCapture: no selection, entering capture mode");
@@ -987,6 +1385,7 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
     if (txt && !isInsidePanel()) {
       console.log("[Sidekick] mouseup: captured text selection, length:", txt.length);
       const item = saveCapturedData({ type:"text", content:txt }); lastSelectedText = "";
+      clearSelection();
       disableCaptureMode(); showBarCaptured(item);
       return;
     }
@@ -1328,13 +1727,28 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
   }
 
   const ICONS = {
-    camera: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M5 7h1a2 2 0 0 0 2 -2a1 1 0 0 1 1 -1h6a1 1 0 0 1 1 1a2 2 0 0 0 2 2h1a2 2 0 0 0 2 2v9a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-9a2 2 0 0 0 2 -2"/><circle cx="12" cy="13" r="3"/></svg>`,
-    download: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2"/><path d="M7 11l5 5l5 -5"/><path d="M12 4l0 12"/></svg>`,
-    save: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M6 4h10l4 4v10a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2"/><path d="M12 14m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M14 4l0 4l-6 0l0 -4"/></svg>`,
+    camera: `<svg fill="#0f172a" width="16px" height="16px" viewBox="0 0 36 36" version="1.1"  preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+        <title>camera-line</title>
+        <path d="M32,8H24.7L23.64,5.28A2,2,0,0,0,21.78,4H14.22a2,2,0,0,0-1.87,1.28L11.3,8H4a2,2,0,0,0-2,2V30a2,2,0,0,0,2,2H32a2,2,0,0,0,2-2V10A2,2,0,0,0,32,8Zm0,22H4V10h8.67l1.55-4h7.56l1.55,4H32Z" class="clr-i-outline clr-i-outline-path-1"></path><path d="M9,19a9,9,0,1,0,9-9A9,9,0,0,0,9,19Zm16.4,0A7.4,7.4,0,1,1,18,11.6,7.41,7.41,0,0,1,25.4,19Z" class="clr-i-outline clr-i-outline-path-2"></path><path d="M9.37,12.83a.8.8,0,0,0-.8-.8H6.17a.8.8,0,0,0,0,1.6h2.4A.8.8,0,0,0,9.37,12.83Z" class="clr-i-outline clr-i-outline-path-3"></path><path d="M12.34,19a5.57,5.57,0,0,0,3.24,5l.85-1.37a4,4,0,1,1,4.11-6.61l.86-1.38A5.56,5.56,0,0,0,12.34,19Z" class="clr-i-outline clr-i-outline-path-4"></path>
+        <rect x="0" y="0" width="36" height="36" fill-opacity="0"/>
+    </svg>`,
+    download: `<svg width="16px" height="16px" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path fill-rule="evenodd" clip-rule="evenodd" d="M7 9.35801V1H8V9.29289L10.1464 7.14645L10.8536 7.85355L7.51386 11.1932L3.91086 7.8674L4.58914 7.1326L7 9.35801ZM2 13V7H1V14H14V7H13V13H2Z" fill="#000000"/>
+    </svg>`,
+    save: `<svg width="16px" height="16px" viewBox="0 0 17 17" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+      <path d="M14.164 0h-12.664c-0.827 0-1.5 0.673-1.5 1.5v14c0 0.827 0.673 1.5 1.5 1.5h14c0.827 0 1.5-0.673 1.5-1.5v-12.724l-2.836-2.776zM8 1v4h3v-4h1v5h-8v-5h4zM3 16v-6h11v6h-11zM16 15.5c0 0.275-0.225 0.5-0.5 0.5h-0.5v-7h-13v7h-0.5c-0.276 0-0.5-0.225-0.5-0.5v-14c0-0.275 0.224-0.5 0.5-0.5h1.5v6h10v-6h0.756l2.244 2.196v12.304z" fill="#000000" />
+    </svg>`,
     pin: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M9 4v6l-2 4v2h10v-2l-2 -4v-6"/><path d="M12 16l0 5"/><path d="M8 4l8 0"/></svg>`,
     share: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-share" viewBox="0 0 16 16"><path d="M13.5 1a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3M11 2.5a2.5 2.5 0 1 1 .603 1.628l-6.718 3.12a2.5 2.5 0 0 1 0 1.504l6.718 3.12a2.5 2.5 0 1 1-.488.876l-6.718-3.12a2.5 2.5 0 1 1 0-3.256l6.718-3.12A2.5 2.5 0 0 1 11 2.5m-8.5 4a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3m11 5.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3"/</svg>`,
     copy:`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-copy" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M4 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1h1v1a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h1v1z"/></svg>`,
     docx: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M5 12v-7a2 2 0 0 1 2 -2h7l5 5v4"/><path d="M5 21v-6h14v6"/><text x="12" y="19.5" font-size="6" font-family="Arial, Helvetica, sans-serif" font-weight="700" stroke="none" fill="currentColor" text-anchor="middle">W</text></svg>`,    txt: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M5 12v-7a2 2 0 0 1 2 -2h7l5 5v4"/><path d="M5 15h3"/><path d="M5 18h3"/><path d="M13 15h6"/><path d="M13 18h6"/></svg>`,
+    search: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><circle cx="10" cy="10" r="7"/><path d="M21 21l-6 -6"/></svg>`,
+    back: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M5 12l14 0"/><path d="M5 12l6 6"/><path d="M5 12l6 -6"/></svg>`,
+    grid: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg>`,
+    trash: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 7l16 0"/><path d="M10 11l0 6"/><path d="M14 11l0 6"/><path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12"/><path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3"/></svg>`,
+    tag: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M7.859 6h-2.834a2.025 2.025 0 0 0 -2.025 2.025v2.834c0 .537 .213 1.052 .593 1.432l6.116 6.116a2.025 2.025 0 0 0 2.864 0l4.834 -4.834a2.025 2.025 0 0 0 0 -2.864l-6.117 -6.116a2.025 2.025 0 0 0 -1.431 -.593z"/><path d="M6 9h-.01"/></svg>`,
+    grip: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/></svg>`,
+    notebook:`<svg width="16px" height="16px" viewBox="0 0 1024 1024" class="icon"  version="1.1" xmlns="http://www.w3.org/2000/svg"><path d="M889.4 322.1h-131c-1.4 0-2.5-1.1-2.5-2.5V169.7c0-1.4 1.1-2.5 2.5-2.5h131c13.7 0 24.8 11.1 24.8 24.8v105.4c0 13.6-11.1 24.7-24.8 24.7z" fill="#7ec4ea" /><path d="M889.4 335.1h-131c-8.6 0-15.5-7-15.5-15.5V169.7c0-8.6 7-15.5 15.5-15.5h131c20.8 0 37.8 16.9 37.8 37.8v105.4c0 20.7-17 37.7-37.8 37.7z m-120.5-26h120.5c6.5 0 11.8-5.3 11.8-11.8V191.9c0-6.5-5.3-11.8-11.8-11.8H768.9v129z" fill="#191919" /><path d="M864.2 479.6h-131c-1.4 0-2.5-1.1-2.5-2.5V327.2c0-1.4 1.1-2.5 2.5-2.5h131c13.7 0 24.8 11.1 24.8 24.8v105.4c0 13.6-11.1 24.7-24.8 24.7z" fill="#2f8fcf" /><path d="M864.2 492.6h-131c-8.6 0-15.5-7-15.5-15.5V327.2c0-8.6 7-15.5 15.5-15.5h131c20.8 0 37.8 16.9 37.8 37.8v105.4c0 20.8-17 37.7-37.8 37.7z m-120.5-26h120.5c6.5 0 11.8-5.3 11.8-11.8V349.5c0-6.5-5.3-11.8-11.8-11.8H743.7v128.9z" fill="#111111" /><path d="M864.2 628.4h-131c-1.4 0-2.5-1.1-2.5-2.5V476c0-1.4 1.1-2.5 2.5-2.5h138.2c9.7 0 17.6 7.9 17.6 17.6v112.6c0 13.6-11.1 24.7-24.8 24.7z" fill="#164971" /><path d="M864.2 641.4h-131c-8.6 0-15.5-7-15.5-15.5V476c0-8.6 7-15.5 15.5-15.5h138.2c16.9 0 30.6 13.7 30.6 30.6v112.6c0 20.7-17 37.7-37.8 37.7z m-120.5-26h120.5c6.5 0 11.8-5.3 11.8-11.8V491c0-2.5-2.1-4.6-4.6-4.6H743.7v129z" fill="#141414" /><path d="M747.7 961.1H255.5c-52.2 0-94.5-42.3-94.5-94.5V102.3c0-27.3 22.2-49.5 49.5-49.5h582.2c27.3 0 49.5 22.2 49.5 49.5v764.2c0 52.2-42.3 94.6-94.5 94.6z" fill="#7ec4ea" /><path d="M747.7 974.1H255.5c-59.3 0-107.5-48.2-107.5-107.5V102.3c0-34.5 28-62.5 62.5-62.5h582.2c34.5 0 62.5 28 62.5 62.5v764.2c0 59.3-48.2 107.6-107.5 107.6zM210.5 65.8c-20.1 0-36.5 16.4-36.5 36.5v764.2c0 45 36.6 81.5 81.5 81.5h492.1c45 0 81.5-36.6 81.5-81.5V102.3c0-20.1-16.4-36.5-36.5-36.5H210.5z" fill="#191919" /><path d="M791.4 877.5H211.8c-28.1 0-50.8-22.7-50.8-50.8V103.6c0-28.1 22.7-50.8 50.8-50.8h579.6c28.1 0 50.8 22.7 50.8 50.8v723.1c0 28.1-22.7 50.8-50.8 50.8z" fill="#FAFCFB" /><path d="M791.4 890.5H211.8c-35.2 0-63.8-28.6-63.8-63.8V103.6c0-35.2 28.6-63.8 63.8-63.8h579.6c35.2 0 63.8 28.6 63.8 63.8v723.1c0 35.2-28.6 63.8-63.8 63.8zM211.8 65.8c-20.8 0-37.8 17-37.8 37.8v723.1c0 20.8 17 37.8 37.8 37.8h579.6c20.8 0 37.8-17 37.8-37.8V103.6c0-20.8-17-37.8-37.8-37.8H211.8z" fill="#0F0F0F" /><path d="M357.8 367.2m-32.6 0a32.6 32.6 0 1 0 65.2 0 32.6 32.6 0 1 0-65.2 0Z" fill="#0F0F0F" /><path d="M652.6 367.2m-32.6 0a32.6 32.6 0 1 0 65.2 0 32.6 32.6 0 1 0-65.2 0Z" fill="#0F0F0F" /><path d="M505.2 492.6c-38.7 0-70.2-30.6-70.2-68.3v-22.1c0-7.2 5.8-13 13-13s13 5.8 13 13v22.1c0 23.3 19.8 42.3 44.2 42.3 24.4 0 44.2-19 44.2-42.3v-22.1c0-7.2 5.8-13 13-13s13 5.8 13 13v22.1c0 37.6-31.5 68.3-70.2 68.3z" fill="#0F0F0F" /><path d="M198.2 184.1h-86.4c-9.4 0-17-7.6-17-17s7.6-17 17-17h86.4c9.4 0 17 7.6 17 17s-7.6 17-17 17zM198.2 278.1h-86.4c-9.4 0-17-7.6-17-17s7.6-17 17-17h86.4c9.4 0 17 7.6 17 17s-7.6 17-17 17zM198.2 372h-86.4c-9.4 0-17-7.6-17-17s7.6-17 17-17h86.4c9.4 0 17 7.6 17 17s-7.6 17-17 17zM198.2 466h-86.4c-9.4 0-17-7.6-17-17s7.6-17 17-17h86.4c9.4 0 17 7.6 17 17s-7.6 17-17 17zM198.2 559.9h-86.4c-9.4 0-17-7.6-17-17s7.6-17 17-17h86.4c9.4 0 17 7.6 17 17s-7.6 17-17 17zM198.2 653.8h-86.4c-9.4 0-17-7.6-17-17s7.6-17 17-17h86.4c9.4 0 17 7.6 17 17s-7.6 17-17 17zM198.2 747.8h-86.4c-9.4 0-17-7.6-17-17s7.6-17 17-17h86.4c9.4 0 17 7.6 17 17s-7.6 17-17 17z" fill="#0F0F0F" /></svg>`,
   };
 
   function svgIcon(name, style = "") {
@@ -1355,6 +1769,11 @@ img{max-width:100%;max-height:200px;border-radius:4px;display:block;margin-top:8
   }
   function iconBtn(icon, title) {
     const b = mk("button", "sk-icon-btn"); b.title = title||""; b.textContent = icon; return b;
+  }
+  function svgIconBtn(iconName, title) {
+    const b = mk("button", "sk-icon-btn"); b.title = title||"";
+    b.appendChild(svgIcon(iconName));
+    return b;
   }
   function row() {
     const d = mk("div"); d.style.cssText = "display:flex;align-items:center;gap:4px;"; return d;
