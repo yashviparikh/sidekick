@@ -5,27 +5,32 @@
     "description":"Your browser's personal shortcut diary",
     "background": {
      "service_worker": "service-worker.js"
- },
+    },
     "content_scripts": [
         {
             "matches": [
-  "https://chatgpt.com/*",
-  "https://www.google.com/*",
-  "https://web.whatsapp.com/*",
-  "https://www.youtube.com/*",
-  "https://mail.google.com/*",
-  "https://www.w3schools.com/*",
-  "https://www.reddit.com/*",
-  "https://www.linkedin.com/*",
-  "https://en.wikipedia.org/wiki/*"
-]
-,
+                "https://chatgpt.com/*",
+                "https://www.google.com/*",
+                "https://web.whatsapp.com/*",
+                "https://www.youtube.com/*",
+                "https://mail.google.com/*",
+                "https://www.w3schools.com/*",
+                "https://www.reddit.com/*",
+                "https://www.linkedin.com/*",
+                "https://en.wikipedia.org/wiki/*"
+                ]
+                ,
             "js": ["content-worker.js"]
         }
     ],
     "permissions": [
         "storage",
         "activeTab",
-        "scripting"
+        "scripting",
+        "contextMenus"
+    ],
+    "optional_host_permissions": [
+        "https://*/*",
+        "http://*/*"
     ]
 }   

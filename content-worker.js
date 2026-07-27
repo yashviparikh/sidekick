@@ -1,5 +1,25 @@
 if (!document.getElementById("sidekick-panel")) {
 
+  let sidekickActive = true;
+
+  function teardownSidekick() {
+    if (!sidekickActive) return;
+    sidekickActive = false;
+    disableCaptureMode();
+    hideBar();
+    panel.remove();
+    arrow.remove();
+    captureBar.remove();
+    styleEl.remove();
+  }
+
+  if (chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener(msg => {
+      if (msg && msg.type === "SIDEKICK_DISABLE") teardownSidekick();
+    });
+  }
+
+
   const STORAGE_KEY = "sidekick_data";
   let _cache = null;
   let _contextAlive = true;
@@ -95,6 +115,7 @@ if (!document.getElementById("sidekick-panel")) {
   let captureBarMode = "hidden"; // "hidden" | "armed" | "captured" | "undone"
 
   document.addEventListener("selectionchange", () => {
+    if (!sidekickActive) return;
     const t = window.getSelection().toString().trim();
     if (t) lastSelectedText = t;
   });
@@ -1151,6 +1172,7 @@ if (!document.getElementById("sidekick-panel")) {
   // Save/Undo/Redo only act while the panel is open, and none of these fire
   // while focus is in an editable field (so normal typing/undo is untouched).
   document.addEventListener("keydown", e => {
+    if (!sidekickActive) return;
     const ae = document.activeElement;
     const isEditable = ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable);
     if (isEditable) return;
